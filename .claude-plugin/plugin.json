@@ -1,0 +1,14 @@
+{
+  "name": "nightwatch",
+  "version": "0.1.0",
+  "description": "Portable Claude Code plugin for unattended overnight repository review: consistency reconciliation, architecture review, and release-progress tracking, compressed into one capped, ranked morning brief. Read-mostly; never writes code, never pushes, never publishes.",
+  "author": { "name": "Nightwatch" },
+  "license": "MIT",
+  "keywords": ["review", "consistency", "architecture", "release", "unattended", "brief"],
+  "commands": [
+    "./commands/nightwatch.md",
+    "./commands/repo-reconcile.md",
+    "./commands/arch-review.md",
+    "./commands/release-progress.md"
+  ]
+}

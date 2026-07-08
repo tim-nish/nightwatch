@@ -1,0 +1,15 @@
+# Nightwatch operational config — every key is optional. Shipped defaults (shown below)
+# apply when a key is absent, and an empty or missing file is valid. Lives at
+# .nightwatch/config.yaml in the host repo. Declarations that no tool can infer live in
+# STATE.md, not here.
+
+cadence:  {repo-reconcile: nightly, arch-review: weekly, release-progress: nightly}
+budget_tokens: {repo-reconcile: 200000, arch-review: 300000, release-progress: 100000}
+effort:   {repo-reconcile: medium, arch-review: high, release-progress: medium}
+caps:     {brief_total: 25, reconcile: 10, arch_candidates: 7}
+ignore:   ["dist/**", "vendor/**", "node_modules/**", ".git/**"]
+extractors: auto            # or a list, e.g. [node, python]
+layers: []                  # e.g. [{name: core, path: "src/core/**", may_depend_on: []}]
+release_checks: {disable: []}   # e.g. [changelog] ; also: {todo_threshold: 40}
+patch_branch: false         # true -> also apply derived-doc patches on nightwatch/* branches
+timeout_minutes: 30

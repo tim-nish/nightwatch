@@ -1,0 +1,15 @@
+{
+  "name": "nightwatch",
+  "version": "0.1.0",
+  "description": "Portable Claude Code plugin for unattended overnight repository review.",
+  "license": "MIT",
+  "private": true,
+  "type": "commonjs",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node test/run.js"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  }
+}

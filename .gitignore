@@ -1,0 +1,3 @@
+node_modules/
+# Nightwatch transient per-run artifacts (host repos gitignore this too)
+.nightwatch/out/
