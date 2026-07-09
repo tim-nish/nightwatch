@@ -7,10 +7,69 @@
 // check statically is listed for a daytime run, not resolved. Direction-of-fix and patch emission
 // are the judgment layer's job (story 3.3); the adversarial refute pass is 3.4.
 const path = require('path');
-const { parseArgs, repoRoot, todayISO, exists, readFileSafe, walkFiles, writeJSON, outDir } = require('./lib/util');
+const fs = require('fs');
+const { parseArgs, repoRoot, todayISO, exists, readFileSafe, walkFiles, writeJSON, outDir, globToRegExp, ensureDir } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
 const { inventory } = require('./surface-inventory');
 const { makeFinding, SCHEMA_VERSION } = require('./lib/findings');
+
+/**
+ * Find the declared authority entry whose `artifact` glob matches a claim's source path.
+ * Deterministic (keys visited in sorted order; first match wins). Returns null when the
+ * artifact has no declared authority — the caller keeps 3.2's undeclared behavior.
+ */
+function authorityFor(authority, srcPath) {
+  if (!authority) return null;
+  for (const key of Object.keys(authority).sort()) {
+    const e = authority[key];
+    if (e && typeof e.artifact === 'string' && globToRegExp(e.artifact).test(srcPath)) {
+      return { key, artifact: e.artifact, role: e.role };
+    }
+  }
+  return null;
+}
+
+/**
+ * Build a `git apply` / `patch -p1` compatible unified diff that DELETES the given 1-based
+ * line numbers from `text`. Returns '' when there is nothing to delete. Deterministic, with
+ * 3 lines of surrounding context; nearby deletions coalesce into one hunk. This is the only
+ * mechanism by which reconcile proposes a fix — it never edits the file in place (FR20).
+ */
+function unifiedDiffDelete(relPath, text, deleteLines1) {
+  const hasNL = text.endsWith('\n');
+  const lines = text.split('\n');
+  if (hasNL) lines.pop();
+  const N = lines.length;
+  const delIdx = new Set([...new Set(deleteLines1)].map((n) => n - 1).filter((i) => i >= 0 && i < N));
+  if (!delIdx.size) return '';
+  const CTX = 3;
+  const sorted = [...delIdx].sort((a, b) => a - b);
+  // Coalesce deletions whose context windows touch/overlap into a single hunk.
+  const groups = [];
+  for (const d of sorted) {
+    const last = groups[groups.length - 1];
+    if (last && d - last.end <= 2 * CTX + 1) last.end = d;
+    else groups.push({ start: d, end: d });
+  }
+  let body = '';
+  let delSeen = 0; // deletions strictly before the current hunk (new-file line offset)
+  for (const g of groups) {
+    const hStart = Math.max(0, g.start - CTX);
+    const hEnd = Math.min(N - 1, g.end + CTX);
+    let oldCount = 0, newCount = 0, hunk = '';
+    for (let i = hStart; i <= hEnd; i++) {
+      const noNL = i === N - 1 && !hasNL;
+      if (delIdx.has(i)) { hunk += '-' + lines[i] + '\n'; oldCount++; }
+      else { hunk += ' ' + lines[i] + '\n'; oldCount++; newCount++; }
+      if (noNL) hunk += '\\ No newline at end of file\n';
+    }
+    const oldStart = hStart + 1;
+    const newStart = newCount === 0 ? oldStart - delSeen - 1 : oldStart - delSeen;
+    body += `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@\n` + hunk;
+    for (let i = hStart; i <= hEnd; i++) if (delIdx.has(i)) delSeen++;
+  }
+  return `--- a/${relPath}\n+++ b/${relPath}\n` + body;
+}
 
 /** Flags the docs claim exist. Verdict from whether the code surface actually exposes them. */
 function extractFlagClaims(docPath, text, codeFlags) {
@@ -78,11 +137,14 @@ function extractAssertionClaims(docPath, text) {
 }
 
 /**
- * Extract-and-verify the deterministic reconcile layer.
- * @returns {{ degraded: string[], findings: any[], claims: any[], unverifiable: any[], stopped: boolean }}
+ * Extract-and-verify plus the judgment layer (authority → direction-of-fix + patch emission).
+ * @param {string} root
+ * @param {{date?: string}} [opts]
+ * @returns {{ degraded: string[], findings: any[], claims: any[], unverifiable: any[], stopped: boolean, patch: string|null, patchPath: string|null, human_decisions: string[] }}
  */
-function reconcile(root) {
-  const { authority } = loadConfig(root);
+function reconcile(root, opts = {}) {
+  const date = opts.date || todayISO();
+  const { authority, config } = loadConfig(root);
   const inv = inventory(root);
   const degraded = [...(inv.degraded || [])];
   const findings = [];
@@ -94,7 +156,7 @@ function reconcile(root) {
     const b = inv.blocking[0];
     findings.push(makeFinding('repo-reconcile', { kind: 'blocker', severity: 5, action: 'human-decision', verified: false,
       title: b.reason, locus: 'surface:blocking', evidence: b.evidence || [], extra: undefined }));
-    return { degraded, findings, claims, unverifiable, stopped: true };
+    return { degraded, findings, claims, unverifiable, stopped: true, patch: null, patchPath: null, human_decisions: findings.map((f) => f.id) };
   }
 
   // No declared authority → detection-only mode: conflicts still reported, but the setup finding
@@ -126,39 +188,96 @@ function reconcile(root) {
   claims.sort((a, b) => a.locus.localeCompare(b.locus));
 
   // Drifted claims become findings; unverifiable ones are listed for a daytime check, never guessed.
+  // The authority role of the artifact a claim lives in decides direction-of-fix (FR20):
+  //   role: derived       → mechanically fixable → action `patch-available` + a patch line
+  //   role: authoritative → a bug or unrecorded decision → `human-decision`, NEVER a patch
+  //   undeclared artifact → `human-decision`, direction omitted (3.2 behavior, preserved)
+  const patchFile = `.nightwatch/out/reconcile-${date}.patch`;
+  const patchDeletes = new Map(); // POSIX path -> Set of 1-based line numbers to delete
   const drift = [];
   for (const c of claims) {
     if (c.verdict === 'drifted') {
       const severity = c.kind === 'command' ? 4 : c.kind === 'flag' ? 3 : 2;
-      drift.push(makeFinding('repo-reconcile', { kind: 'drift', severity, action: 'human-decision', verified: false,
-        title: c.title, locus: c.locus, evidence: [c.source], extra: undefined }));
+      const auth = authorityFor(authority, c.source.path);
+      let action = 'human-decision';
+      let extra;
+      if (auth && auth.role === 'derived') {
+        action = 'patch-available';
+        // The command claim's evidence points at the code-fence line; the offending command
+        // itself is the next line. Flag claims already point at the exact documented line.
+        const delLine = c.kind === 'command' ? c.source.line + 1 : c.source.line;
+        if (!patchDeletes.has(c.source.path)) patchDeletes.set(c.source.path, new Set());
+        patchDeletes.get(c.source.path).add(delLine);
+        extra = { direction: c.source.path, patch_file: patchFile };
+      }
+      drift.push(makeFinding('repo-reconcile', { kind: 'drift', severity, action, verified: false,
+        title: c.title, locus: c.locus, evidence: [c.source], extra }));
     } else if (c.verdict === 'unverifiable-statically') {
       unverifiable.push({ kind: c.kind, text: c.text, source: c.source, reason: 'needs a live run / deeper analysis' });
     }
   }
   drift.sort((a, b) => b.severity - a.severity || a.id.localeCompare(b.id));
 
-  // Ordering invariant: the setup finding (declare authority) is #1 in detection-only mode.
+  // Setup findings rank ahead of drift. Detection-only keeps the "declare authority" finding
+  // as #1 (3.2). With authority declared, an authority glob that matches no repo file is a dead
+  // pointer the maintainer must fix (FR36).
+  const setupFindings = [];
   if (detectionOnly) {
-    findings.push(makeFinding('repo-reconcile', { kind: 'setup', severity: 4, action: 'daytime-task', verified: false,
+    setupFindings.push(makeFinding('repo-reconcile', { kind: 'setup', severity: 4, action: 'daytime-task', verified: false,
       title: 'declare authority in STATE.md; run `/nightwatch init`', locus: 'authority:undeclared', evidence: [], extra: undefined }));
     degraded.push('authority undeclared — detection-only mode; findings omit direction-of-fix');
+  } else {
+    const allFiles = walkFiles(root, config.ignore || []);
+    for (const key of Object.keys(authority).sort()) {
+      const e = authority[key];
+      const glob = e && e.artifact;
+      if (typeof glob !== 'string') continue;
+      const re = globToRegExp(glob);
+      if (!allFiles.some((f) => re.test(f))) {
+        setupFindings.push(makeFinding('repo-reconcile', { kind: 'setup', severity: 3, action: 'daytime-task', verified: false,
+          title: `authority pointer "${key}" targets "${glob}" but no file in the repo matches it`,
+          locus: `authority:dead:${key}`, evidence: [], extra: undefined }));
+        degraded.push(`authority pointer "${key}" (${glob}) matches no file — dead pointer`);
+      }
+    }
+    setupFindings.sort((a, b) => b.severity - a.severity || a.id.localeCompare(b.id));
   }
-  findings.push(...drift);
 
-  return { degraded, findings, claims, unverifiable, stopped: false };
+  // Draft the patch (derived artifacts only). NEVER touches a repo file in place — the patch is
+  // written under .nightwatch/out and is the sole fix mechanism (FR20, normative safety rule).
+  let patch = '';
+  for (const p of [...patchDeletes.keys()].sort()) {
+    const text = readFileSafe(path.join(root, p)) || '';
+    patch += unifiedDiffDelete(p, text, [...patchDeletes.get(p)]);
+  }
+  let patchPath = null;
+  if (patch) {
+    patchPath = path.join(outDir(root), `reconcile-${date}.patch`);
+    ensureDir(path.dirname(patchPath));
+    fs.writeFileSync(patchPath, patch);
+  }
+
+  // Cap the brief section by user-facing severity (default 10), setup ahead of drift.
+  const cap = (config.caps && Number.isFinite(config.caps.reconcile)) ? config.caps.reconcile : 10;
+  const ordered = [...setupFindings, ...drift].slice(0, cap);
+  findings.push(...ordered);
+  const human_decisions = ordered.filter((f) => f.action === 'human-decision').map((f) => f.id);
+
+  return { degraded, findings, claims, unverifiable, stopped: false, patch: patch || null, patchPath, human_decisions };
 }
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const root = repoRoot(args);
   const date = todayISO(args);
-  const res = reconcile(root);
-  const doc = { schema: SCHEMA_VERSION, job: 'repo-reconcile', date, degraded: res.degraded, findings: res.findings, claims: res.claims, unverifiable: res.unverifiable, stopped: res.stopped };
+  const res = reconcile(root, { date });
+  const patch_path = res.patchPath ? `.nightwatch/out/reconcile-${date}.patch` : null;
+  const doc = { schema: SCHEMA_VERSION, job: 'repo-reconcile', date, degraded: res.degraded, findings: res.findings,
+    human_decisions: res.human_decisions, patch_path, claims: res.claims, unverifiable: res.unverifiable, stopped: res.stopped };
   writeJSON(path.join(outDir(root), `repo-reconcile-${date}.json`), doc);
   const drifted = res.findings.filter((f) => f.kind === 'drift').length;
   if (res.findings.length === 0) process.stdout.write('0 findings\n');
-  else process.stdout.write(JSON.stringify({ findings: res.findings.length, drifted, unverifiable: res.unverifiable.length, degraded: res.degraded, stopped: res.stopped }, null, 2) + '\n');
+  else process.stdout.write(JSON.stringify({ findings: res.findings.length, drifted, patch_available: res.findings.filter((f) => f.action === 'patch-available').length, human_decisions: res.human_decisions.length, unverifiable: res.unverifiable.length, degraded: res.degraded, stopped: res.stopped }, null, 2) + '\n');
 }
 
 if (require.main === module) main();
