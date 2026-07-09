@@ -110,6 +110,28 @@
  */
 
 /**
+ * A per-member cadence cursor inside `.nightwatch/state.json`. Deliberately human-inspectable:
+ * a reader sees the job's cadence, when it last ran, how many times, and the date it is next due
+ * — the whole "what ran / what's due / why skipped" decision is auditable without re-deriving it.
+ * @typedef {object} JobCursor
+ * @property {string} cadence Scheduling cadence, `nightly` or `weekly`.
+ * @property {string | null} last_run ISO `YYYY-MM-DD` the job last ran, or null if never.
+ * @property {number} runs Count of recorded runs (monotonic).
+ * @property {string | null} next_due ISO date the cursor is next due — a legible convenience field.
+ */
+
+/**
+ * `.nightwatch/state.json` — the orchestrator's durable scheduling state (FR31). Cadence cursors
+ * plus `last_brief_date` make cadence decisions and per-night idempotency mechanical and legible.
+ * @typedef {object} NightwatchState
+ * @property {number} schema Major schema version of this state file.
+ * @property {string | null} updated ISO date the state was last written.
+ * @property {string | null} last_brief_date ISO date of the most recent completed night; the
+ *   idempotency sentinel — a same-date re-invocation without `--force` is a no-op.
+ * @property {Record<string, JobCursor>} jobs Per-member cadence cursors, keyed by job name.
+ */
+
+/**
  * @typedef {'exact' | 'heuristic'} Confidence
  * How much to trust a signal: `exact` is a mechanical fact, `heuristic` is an inference.
  */
