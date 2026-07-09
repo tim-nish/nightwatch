@@ -118,12 +118,29 @@ function inventory(root) {
   const files = walkFiles(root, config.ignore);
   const eco = detectEcosystem(root);
   const degraded = [];
+  // FR36: a broken build / unparsable surface is captured here as a `blocking` failure — a
+  // non-empty `blocking` tells the consuming job to rank it finding #1 and stop deeper
+  // checks — while we still emit a valid (universal-only) surface document.
+  const blocking = [];
   const base = universal(root, files);
   let ext = { bins: [], exports: [], cli: { subcommands: [], flags: [] }, config_keys: [] };
-  if (eco === 'node') ext = nodeExtractor(root, files);
-  else if (eco === 'python') ext = pythonExtractor(root, files);
-  else degraded.push(`no extractor for ecosystem "${eco}" — universal fallback only (file tree, command files, README claims)`);
-  return { ecosystem: eco, degraded, ...base, ...ext };
+
+  // A present-but-unparsable primary manifest is the static analog of "the build is broken":
+  // the declared surface can't be trusted, so flag it rather than silently under-reporting.
+  if (eco === 'node' && readFileSafe(path.join(root, 'package.json')) != null && readJSONSafe(path.join(root, 'package.json')) == null) {
+    blocking.push({ reason: 'package.json is present but not valid JSON — Node surface cannot be extracted', evidence: [{ path: 'package.json' }] });
+  }
+
+  try {
+    if (eco === 'node') ext = nodeExtractor(root, files);
+    else if (eco === 'python') ext = pythonExtractor(root, files);
+    else degraded.push(`no extractor for ecosystem "${eco}" — universal fallback only (file tree, command files, README claims)`);
+  } catch (e) {
+    // A probe that throws leaves the surface unparsable — capture and degrade to universal.
+    blocking.push({ reason: `${eco} surface probe failed (${(e && e.message) || e}) — universal signals only`, evidence: [] });
+  }
+
+  return { ecosystem: eco, blocking, degraded, ...base, ...ext };
 }
 
 function main() {
@@ -133,7 +150,7 @@ function main() {
   const inv = inventory(root);
   const doc = { job: 'surface-inventory', date, ...inv };
   writeJSON(path.join(outDir(root), `surface-${date}.json`), doc);
-  process.stdout.write(JSON.stringify({ ecosystem: inv.ecosystem, exports: inv.exports.length, flags: inv.cli.flags.length, subcommands: inv.cli.subcommands.length, command_files: inv.command_files.length, degraded: inv.degraded }, null, 2) + '\n');
+  process.stdout.write(JSON.stringify({ ecosystem: inv.ecosystem, exports: inv.exports.length, flags: inv.cli.flags.length, subcommands: inv.cli.subcommands.length, command_files: inv.command_files.length, blocking: inv.blocking.length, degraded: inv.degraded }, null, 2) + '\n');
 }
 
 if (require.main === module) main();
