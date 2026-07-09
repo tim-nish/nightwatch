@@ -109,4 +109,38 @@
  * @property {string | null} [stateText]
  */
 
+/**
+ * @typedef {'exact' | 'heuristic'} Confidence
+ * How much to trust a signal: `exact` is a mechanical fact, `heuristic` is an inference.
+ */
+
+/**
+ * @typedef {'hotspot' | 'hidden-coupling' | 'growth-trend' | 'file-tree' | 'readme' | 'todo-density'} SignalKind
+ * Category of an architecture-review signal (see signals.js KINDS).
+ */
+
+/**
+ * A normalized architecture-review signal: an evidence-backed candidate observation an
+ * extractor surfaces for the judgment layer to argue over (spec §2.6, FR8). Extractors emit
+ * only this shape; the judgment layer consumes only this shape.
+ * @typedef {object} Signal
+ * @property {SignalKind} kind
+ * @property {Confidence} confidence
+ * @property {EvidenceItem[]} evidence Structured `{path, line?}` loci backing the signal.
+ * @property {string} detail Human-readable description of the observation.
+ * @property {string} source Name of the extractor that produced it (e.g. `universal-git`).
+ */
+
+/**
+ * A signals document written to `.nightwatch/out/signals-<date>.json` — the inter-command
+ * interface between extractors and the judgment layer (FR8).
+ * @typedef {object} SignalsDoc
+ * @property {number} schema Major schema version; consumers refuse a higher major.
+ * @property {string} job Always `signals`.
+ * @property {string} date
+ * @property {{ name: string, signals?: number }[]} sources Extractors that ran this run.
+ * @property {string[]} degraded Setup/skip notices (e.g. shallow history).
+ * @property {Signal[]} signals
+ */
+
 module.exports = {};
