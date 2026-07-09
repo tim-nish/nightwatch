@@ -50,17 +50,31 @@ Overnight mode never creates or edits `STATE.md` or `config.yaml`.
 
 ## Overnight flow (no argument)
 
-1. **Preconditions.** If the repo is not a git checkout → abort with a one-line stub brief and
-   exit. If `.nightwatch/briefs/<date>.md` already exists and `--force` was not passed → this is
-   a same-night re-invocation: read `state.json` + the dated brief and exit **without spending
-   tokens or changing files**.
+The precondition, idempotency, cadence, and cursor decisions below are **not yours to improvise** —
+they are computed deterministically by the scheduler so every night is reproducible. Get the plan
+first, then execute exactly the members it lists:
 
-2. **Cadence.** Read `.nightwatch/state.json` (cadence cursors, last-run dates) and config
-   `cadence`. Decide which members are due tonight: `repo-reconcile` (nightly),
-   `arch-review` (weekly), `release-progress` (nightly). Create `state.json` on first run.
+```
+node ${NW_ROOT}/scripts/orchestrate.js --repo . --plan
+```
 
-3. **Run members in dependency order**, each as an independent subagent with its
-   `budget_tokens`, `effort`, and `timeout_minutes` from config:
+This prints `{ status, due, skipped, steps }`. `status` is `abort` (not a git checkout — emit the
+one-line stub brief and stop), `noop` (a completed run already exists tonight and `--force` was not
+passed — read `state.json` + the dated brief and exit **without spending tokens or changing
+files**), or `plan` (proceed). `due` is the ordered member list to run; `skipped` explains each
+member left out (with its `next_due` date); `steps` is `due…` followed by `collect-brief`.
+
+1. **Preconditions & idempotency.** Handled by the `abort` / `noop` statuses above. `orchestrate.js
+   --plan` performs **no writes** — it only reads `.nightwatch/state.json` and config.
+
+2. **Cadence.** `.nightwatch/state.json` holds one **human-inspectable cursor per member** —
+   `{cadence, last_run, runs, next_due}` — plus `last_brief_date` (the idempotency sentinel).
+   Cadence is config-owned (`repo-reconcile` nightly, `arch-review` weekly, `release-progress`
+   nightly); a member whose cursor is not due tonight appears in `skipped`, so `arch-review` runs
+   at most weekly. The file is created on first run.
+
+3. **Run members in dependency order** — exactly the jobs in `due`, each as an independent subagent
+   with its `budget_tokens`, `effort`, and `timeout_minutes` from config:
    1. `/repo-reconcile` (if due)
    2. `/arch-review` (if due)
    3. `/release-progress` (last, so it consumes tonight's findings JSON)
@@ -87,7 +101,13 @@ Overnight mode never creates or edits `STATE.md` or `config.yaml`.
    computed by `collect-brief.js` and surfaced in the next brief — the system proposes pruning
    itself.
 
-6. **Update `state.json`** cadence cursors and last-run dates.
+6. **Update `state.json`.** Run the scheduler once more without `--plan` to advance the cadence
+   cursors (`last_run`, `runs`, `next_due`) for the members that ran and stamp `last_brief_date`:
+   ```
+   node ${NW_ROOT}/scripts/orchestrate.js --repo .
+   ```
+   This is the only step that writes `state.json`, and it writes nowhere else — the sole scheduler
+   write lands inside `.nightwatch/**`. A subsequent same-night invocation now returns `noop`.
 
 ## Failure handling
 
