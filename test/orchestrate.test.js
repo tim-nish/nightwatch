@@ -137,7 +137,26 @@ module.exports = {
     const res = orch(root);
     assert.strictEqual(res.status, 'abort');
     assert.strictEqual(res.reason, 'not-a-git-checkout');
-    assert.strictEqual(readFile(root, '.nightwatch/state.json'), null, 'abort wrote nothing');
+    assert.strictEqual(readFile(root, '.nightwatch/state.json'), null, 'abort writes no scheduler state');
+  },
+
+  // Story 4.3 / FR32 AC4 — a directory that is NOT a git checkout aborts, but the human still wakes
+  // to a one-line stub brief naming the failure (no scheduler state, no tokens spent).
+  'failure/AC4: a non-git directory aborts with a one-line stub brief': () => {
+    const root = tmpRepo(); // no gitInit
+    const res = orch(root);
+    assert.strictEqual(res.status, 'abort');
+    assert.strictEqual(res.reason, 'not-a-git-checkout');
+
+    const brief = readFile(root, '.nightwatch/MORNING.md');
+    assert.ok(brief != null, 'a stub brief was written on abort');
+    assert.ok(/not a git checkout/i.test(brief), 'stub names the failure');
+    assert.strictEqual(readFile(root, `.nightwatch/briefs/${DATE}.md`), brief, 'dated stub brief written too');
+    // One failure line, no member sections — the run never got past the precondition.
+    const failLines = brief.split('\n').filter((l) => l.startsWith('- '));
+    assert.strictEqual(failLines.length, 1, 'exactly one line in the stub');
+    // The abort still writes nothing but the stub brief inside `.nightwatch/**`.
+    assert.strictEqual(readFile(root, '.nightwatch/state.json'), null, 'no scheduler state on abort');
   },
 
   // ---- AC (d): a completed run writes ONLY within the declared write surface ---------------

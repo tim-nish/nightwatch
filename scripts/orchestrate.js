@@ -18,6 +18,7 @@ const {
   readState, writeState, reconcileState, planRun, alreadyRanTonight, recordRun, markBriefed,
 } = require('./lib/schedule');
 const { loadConfig } = require('./lib/config');
+const { writeStubBrief } = require('./collect-brief');
 
 /**
  * Deterministic orchestration bookkeeping for one night. Never runs member jobs — it decides and
@@ -27,8 +28,11 @@ const { loadConfig } = require('./lib/config');
  * @param {{ force?: boolean, planOnly?: boolean }} [opts]
  */
 function orchestrate(root, date, { force = false, planOnly = false } = {}) {
-  // 1. Precondition: unattended review only makes sense inside a git checkout (§6 failure handling).
+  // 1. Precondition: unattended review only makes sense inside a git checkout (§6 failure handling,
+  //    FR32 AC4). Abort, but still emit a one-line stub brief so the human wakes to an explanation
+  //    rather than silence — the write lands inside `.nightwatch/**` and never spends tokens.
   if (!isGitRepo(root)) {
+    writeStubBrief(root, date, 'not a git checkout — `/nightwatch` needs a git repository to review.');
     return { status: 'abort', reason: 'not-a-git-checkout', due: [], skipped: [], steps: [] };
   }
 

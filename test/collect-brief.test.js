@@ -1,8 +1,8 @@
 'use strict';
 const assert = require('assert');
 const path = require('path');
-const { tmpRepo, write, readFile } = require('./helpers');
-const { collect, computeDemotions } = require('../scripts/collect-brief');
+const { tmpRepo, write, readFile, runScript } = require('./helpers');
+const { collect, collectOrStub, computeDemotions } = require('../scripts/collect-brief');
 const { writeFindings, appendLedger, readLedger } = require('../scripts/lib/findings');
 const { openTracker } = require('../scripts/lib/tracker');
 const { writeJSON, outDir } = require('../scripts/lib/util');
@@ -180,6 +180,78 @@ module.exports = {
     collect(r, date);
     assert.strictEqual(readFile(r, '.nightwatch/MORNING.md'), first, 'MORNING.md byte-identical');
     assert.strictEqual(readFile(r, `.nightwatch/briefs/${date}.md`), firstDated, 'dated brief byte-identical');
+  },
+
+  // Story 4.3 / FR32 AC1 — one member crashes: the brief keeps the OTHER jobs' sections and the
+  // crash collapses to exactly one failure line; the collector exits SUCCESS (partial night).
+  'failure/AC1: a crashed member degrades to one line; other jobs\' sections survive; success exit': () => {
+    const r = tmpRepo();
+    const date = '2000-04-01';
+    // repo-reconcile "crashed" (no findings file at all); arch-review ran fine and produced findings.
+    writeFindings(r, 'arch-review', date, [], mkFindings('arch-review', 2, { kind: 'arch', severity: 3 }));
+    writeJSON(path.join(outDir(r), `run-status-${date}.json`), { jobs: [
+      { job: 'repo-reconcile', status: 'crashed', note: 'subagent exited non-zero', tokens: 0 },
+      { job: 'arch-review', status: 'ok', tokens: 500 },
+    ] });
+
+    // Success exit: collect-brief.js runs to completion (execFileSync throws on a non-zero exit).
+    runScript('collect-brief.js', r, { date });
+    const brief = readFile(r, '.nightwatch/MORNING.md');
+
+    // The surviving job's section is fully rendered with its findings.
+    assert.ok(/## Architecture \(arch-review\)/.test(brief), 'arch section present');
+    assert.ok(/AR-arch0/.test(brief) && /AR-arch1/.test(brief), 'arch findings shown');
+    // The crashed member did NOT take out the reconcile section (it renders "0 findings").
+    assert.ok(/## Consistency \(repo-reconcile\)/.test(brief), 'reconcile section still present');
+
+    // Exactly one failure line for the crashed member, carrying its status + note.
+    const fail = brief.split('## Failures & degraded notices')[1].split('## Appendix')[0];
+    const crashLines = fail.split('\n').filter((l) => /repo-reconcile/.test(l));
+    assert.strictEqual(crashLines.length, 1, 'crashed member is exactly one line');
+    assert.ok(/repo-reconcile: \*\*crashed\*\* — subagent exited non-zero/.test(fail), 'status + note rendered');
+  },
+
+  // Story 4.3 / FR32 AC2 — a member killed at `timeout_minutes` records status "timeout"; the
+  // deterministic/testable part is that a timeout renders as one line and blocks nothing.
+  'failure/AC2: a timeout status renders as one line and does not block the brief': () => {
+    const r = tmpRepo();
+    const date = '2000-04-02';
+    writeFindings(r, 'repo-reconcile', date, [], mkFindings('repo-reconcile', 1, { kind: 'drift', severity: 2 }));
+    writeJSON(path.join(outDir(r), `run-status-${date}.json`), { jobs: [
+      { job: 'repo-reconcile', status: 'ok', tokens: 300 },
+      { job: 'arch-review', status: 'timeout', note: 'killed at timeout_minutes=15', tokens: 15000 },
+    ] });
+    const res = collect(r, date);
+    // The job that DID finish is fully present — the timeout did not block assembly.
+    assert.strictEqual(res.total, 1, 'the surviving job\'s finding is in the brief');
+    const brief = readFile(r, '.nightwatch/MORNING.md');
+    assert.ok(/RE-drift0/.test(brief), 'reconcile finding shown despite arch timeout');
+    const fail = brief.split('## Failures & degraded notices')[1].split('## Appendix')[0];
+    const toLines = fail.split('\n').filter((l) => /arch-review/.test(l));
+    assert.strictEqual(toLines.length, 1, 'timeout is exactly one line');
+    assert.ok(/arch-review: \*\*timeout\*\* — killed at timeout_minutes=15/.test(fail), 'kill noted');
+  },
+
+  // Story 4.3 / FR32 AC3 — the collector itself fails: it still writes a stub brief naming the
+  // failure, and the raw findings JSON is left intact in out/ for triage.
+  'failure/AC3: collector failure writes a stub brief; raw out/*.json survives': () => {
+    const r = tmpRepo();
+    const date = '2000-04-03';
+    // A findings doc from a too-new schema makes assembly throw (readAllFindings refuses it, FR6).
+    writeJSON(path.join(outDir(r), `repo-reconcile-${date}.json`),
+      { schema: 999, job: 'repo-reconcile', date, degraded: [], findings: [] });
+    const rawBefore = readFile(r, `.nightwatch/out/repo-reconcile-${date}.json`);
+
+    const res = collectOrStub(r, date);
+    assert.strictEqual(res.status, 'stub', 'assembly fell back to a stub');
+    assert.ok(/schema v999/.test(res.reason), 'reason names the failure');
+
+    const brief = readFile(r, '.nightwatch/MORNING.md');
+    assert.ok(/brief incomplete/.test(brief), 'stub brief written');
+    assert.ok(/schema v999/.test(brief), 'stub names the failure');
+    assert.ok(readFile(r, `.nightwatch/briefs/${date}.md`) === brief, 'dated stub brief written too');
+    // The raw findings JSON is untouched — the collector never deletes out/*.json.
+    assert.strictEqual(readFile(r, `.nightwatch/out/repo-reconcile-${date}.json`), rawBefore, 'raw out/*.json intact');
   },
 
   'demotion: job with zero acted-on findings two runs running is flagged': () => {

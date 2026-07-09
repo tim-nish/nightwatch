@@ -132,6 +132,32 @@
  */
 
 /**
+ * @typedef {'ok' | 'crashed' | 'timeout' | 'skipped'} RunStatusState
+ * Outcome of one member subagent in a night's run. Anything other than `ok` renders as a single
+ * line in the brief's "Failures & degraded notices" section and never blocks the remaining jobs
+ * (§6 failure handling, FR32): `crashed`/`timeout` mark a member that died or was killed at
+ * `timeout_minutes`; `skipped` marks a member cadence left out tonight.
+ */
+
+/**
+ * One member's outcome line inside `.nightwatch/out/run-status-<date>.json`.
+ * @typedef {object} RunStatusJob
+ * @property {Job} job
+ * @property {RunStatusState} status
+ * @property {string} [note] One-line human-readable note (e.g. why it crashed or was killed).
+ * @property {number} [tokens] Tokens the member spent, when known.
+ */
+
+/**
+ * `.nightwatch/out/run-status-<date>.json` — the /nightwatch command's per-member outcome record
+ * for one night. Written by the subagent runner (the kill/crash bookkeeping is the command's job),
+ * read by collect-brief.js so a crashed or timed-out member degrades to exactly one brief line
+ * (§6 failure handling, FR32).
+ * @typedef {object} RunStatusDoc
+ * @property {RunStatusJob[]} jobs
+ */
+
+/**
  * @typedef {'exact' | 'heuristic'} Confidence
  * How much to trust a signal: `exact` is a mechanical fact, `heuristic` is an inference.
  */
