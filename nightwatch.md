@@ -31,20 +31,29 @@ from them:
    user ignores two consecutive runs is flagged for retirement or redesign in the
    next brief.
 4. **Deterministic work goes in scripts; judgment work goes in agent prompts.**
-   Scripts (single-file Node CLIs, `js-yaml` as the only dependency) extract signals,
-   enforce caps, and assemble output — they cannot hallucinate. Agents interpret
-   signals, argue verdicts, and write prose.
+   Scripts (single-file Node CLIs, `js-yaml` as the only runtime dependency) extract
+   signals, enforce caps, and assemble output — they cannot hallucinate. Agents
+   interpret signals, argue verdicts, and write prose.
 5. **Anything a human must decide is declared, never inferred.** Source-of-truth
    precedence, the definition of "release-ready", layering rules, and project phase
    are read from repo-local declaration files. Undeclared → the dependent check is
    skipped and surfaced as a one-line setup finding. This rule is what makes the
    plugin honest on repositories it knows nothing about.
+6. **Never reimplement a mature analyzer.** Nightwatch's durable value is the
+   judgment layer: interpreting signals, ranking, adversarial verification, and the
+   brief. Deterministic *analysis* — dependency graphs, layering enforcement,
+   dead-code detection — is delegated to established, actively maintained ecosystem
+   tools through the extractor adapter contract (§2.6). Custom deterministic code is
+   limited to three categories: (a) universal signals every repository has (git
+   history, file tree); (b) normalization glue that maps tool output onto the shared
+   signals schema; (c) checks with no mature open-source equivalent (claimable-surface
+   inventory, release-hygiene checks, brief assembly).
 
 ---
 
 ## 2. Architecture
 
-### 2.1 Packaging
+### 2.1 Packaging and distribution
 
 One Claude Code plugin, `nightwatch`, providing four commands:
 
@@ -59,15 +68,37 @@ Plus `/nightwatch init` — a daytime, interactive setup mode that drafts the tw
 repo-local files below with the human present. Overnight runs never create or edit
 declaration files.
 
+**Dual distribution modes (normative).** The same build must work both ways, with no
+file differences between them:
+
+1. **Plugin mode** — the directory is registered as a Claude Code plugin (via
+   `--plugin-dir`, a local/private marketplace, or a published one). The harness sets
+   `${CLAUDE_PLUGIN_ROOT}` for every command run.
+2. **Standalone-command mode** — the `commands/*.md` files are symlinked or copied
+   into a Claude Code commands directory (`~/.claude/commands/` or a project-local
+   `.claude/commands/`), and the user sets `${NIGHTWATCH_ROOT}` to the checkout.
+
+Two rules keep the modes interchangeable:
+
+- **Single script-root resolution.** Every path to a plugin-internal file (script,
+  template, adapter) resolves through one chain: `${CLAUDE_PLUGIN_ROOT}` →
+  `${NIGHTWATCH_ROOT}` → refuse to run with a one-line setup message. No hardcoded
+  paths, no guessing. Scripts are invoked as
+  `node <root>/scripts/<name>.js --repo .`.
+- **Self-contained command files.** `commands/*.md` use only the markdown+frontmatter
+  format valid in both plugin and user-command contexts, and never assume a
+  particular install location or working directory beyond "the session runs in the
+  host repo root". Command names are stable across modes (they are part of the user's
+  muscle memory and of any scheduled invocations).
+
 ### 2.2 Genericity mechanisms
 
 The same plugin build must work, unmodified, on any repository. Three mechanisms
 carry that guarantee:
 
-1. **No hardcoded paths.** Plugin-internal paths resolve through
-   `${CLAUDE_PLUGIN_ROOT}` (provided by the harness at runtime). Repo-side paths are
-   either the repo root the session runs in, or declared in local config. Scripts are
-   invoked as `node ${CLAUDE_PLUGIN_ROOT}/scripts/<name>.js --repo .`.
+1. **No hardcoded paths.** The §2.1 resolution chain for plugin-internal paths;
+   repo-side paths are either the repo root the session runs in, or declared in local
+   config.
 2. **Two repo-local files carry everything repo-specific.** Both optional; every
    command runs with neither and degrades gracefully (§2.5):
    - **`STATE.md`** (repo root, human-authored, machine-read): declarations no tool
@@ -76,15 +107,15 @@ carry that guarantee:
      fenced ` ```yaml ` block that tooling parses; prose outside the block is ignored
      by machines. Lives at root deliberately: it's a contract with humans too.
    - **`.nightwatch/config.yaml`** (operational config, all keys optional): budgets,
-     caps, cadences, ignore globs, extractor selection. Defaults ship in the plugin;
-     an absent or empty file is valid.
-3. **Pluggable deterministic extractors with a universal fallback.** Surface and
-   architecture signals need language awareness. Extractors ship per ecosystem
-   (Node/TS and Python first), selected by lockfile/manifest detection
-   (`extractors: auto`). When none matches, jobs fall back to signals that exist in
-   every repository: git history (churn, co-change coupling, hotspots), file-tree
-   shape and size trends, README/docs claims, and TODO/FIXME density. Degradation is
-   always stated in the brief, never silent.
+     caps, cadences, ignore globs, extractor selection, tracking backend. Defaults
+     ship in the plugin; an absent or empty file is valid.
+3. **Extractor adapters with a universal fallback (§2.6).** Language-aware signals
+   come from mature ecosystem analyzers wrapped in thin adapters, selected by
+   lockfile/manifest detection (`extractors: auto`). When no adapter matches — or its
+   backing tool isn't installed — jobs fall back to signals that exist in every
+   repository: git history (churn, co-change coupling, hotspots), file-tree shape and
+   size trends, README/docs claims, and TODO/FIXME density. Degradation is always
+   stated in the brief, never silent.
 
 ### 2.3 The unavoidable repo-specific assumptions — named
 
@@ -105,20 +136,27 @@ makes the declarations cost ten minutes once.
 **This repository (the plugin):**
 
 ```
-night-watch/
+nightwatch/
   .claude-plugin/plugin.json        # name, version, command manifest
   commands/
     nightwatch.md                   # orchestrator (also handles `init`)
     repo-reconcile.md
     arch-review.md
     release-progress.md
-  scripts/                          # Node, js-yaml only, all take --repo
+  scripts/                          # Node CLIs; js-yaml is the only runtime dep
+    lib/types.js                    # JSDoc typedefs: findings, signals, tracker items
     lib/config.js                   # defaults ← .nightwatch/config.yaml ← STATE.md yaml block
-    lib/findings.js                 # findings schema, ledger append, dedupe
-    git-signals.js                  # churn, co-change, hotspots (universal)
-    surface-inventory.js            # public surface: CLI/flags/exports/commands
-    arch-signals.js                 # speculation/duplication/layering signals
-    release-checks.js               # deterministic release-hygiene checks
+    lib/findings.js                 # findings schema helpers, stable-id hashing, dedupe
+    lib/signals.js                  # normalized signals schema helpers + merge
+    lib/tracker.js                  # tracking-store interface + markdown backend (§2.7)
+    extractors/                     # adapter per analyzer (§2.6)
+      universal-git.js              # churn, co-change, hotspots, growth (always available)
+      node-depcruise.js             # wraps dependency-cruiser (Node/TS)
+      python-importlinter.js        # wraps import-linter (Python)
+    git-signals.js                  # CLI over universal-git
+    surface-inventory.js            # public surface: CLI/flags/exports/commands (custom — no mature equivalent)
+    extract-signals.js              # extractor runner: detect → probe → run adapters → merged signals JSON
+    release-checks.js               # deterministic release-hygiene checks (custom — no mature equivalent)
     collect-brief.js                # assemble brief, enforce caps, write MORNING.md
   templates/
     STATE.md  config.yaml  RELEASE.md
@@ -130,7 +168,7 @@ night-watch/
 
 ```
 STATE.md                            # human declarations (drafted by /nightwatch init)
-RELEASE.md                          # maintained by /release-progress
+RELEASE.md                          # maintained by /release-progress (markdown backend)
 .nightwatch/
   config.yaml                       # optional operational config
   MORNING.md                        # stable path: latest brief (open this)
@@ -152,10 +190,10 @@ through it, and the brief collector consumes all three. Jobs are therefore loose
 coupled — any job runs standalone, and a partial night degrades cleanly.
 
 ```json
-{ "job": "repo-reconcile", "date": "2026-07-08",
+{ "schema": 1, "job": "repo-reconcile", "date": "2026-07-08",
   "degraded": ["no STATE.md authority block"],
   "findings": [ {
-    "id": "RC-0031",              
+    "id": "RC-0031",
     "kind": "drift|arch|blocker|decision|setup|info",
     "severity": 1,
     "title": "README documents --tag flag removed from CLI",
@@ -165,10 +203,155 @@ coupled — any job runs standalone, and a partial night degrades cleanly.
 } ] }
 ```
 
+- `schema` versions the format; consumers reject a major version they don't know
+  rather than misreading it.
 - `id` is stable across runs (content-hash of locus + kind) — this is what makes
   ledger dedupe, recurrence counting, and acted-on/dismissed tracking work.
 - `severity`: 1 blocker … 5 nice-to-have.
 - `verified`: survived the adversarial pass; only verified findings enter the brief.
+
+All shared schemas (findings, signals, tracker items) are defined exactly once, as
+JSDoc typedefs in `lib/types.js` (§2.8); every producer and consumer imports them.
+
+### 2.6 Extractor adapter architecture
+
+Principle 6 made concrete. An **extractor adapter** is a thin module that turns one
+analyzer's output into the shared signals schema. Nightwatch's judgment layer consumes
+*only* the normalized schema — never a tool's raw output — so adapters are swappable
+and new ecosystems never touch core code.
+
+**Two classes of extractor:**
+
+1. **Universal built-ins** — always available, pure Node, no external tool:
+   `universal-git` (churn, co-change coupling, hotspots, size/growth trends) and the
+   file-tree/README/TODO-density signals. These are the floor every run stands on.
+2. **Tool adapters** — wrap a mature, actively maintained analyzer that the *host
+   environment* provides. Nightwatch never bundles, installs, or downloads analyzers
+   (that would break both the dependency-light contract and the overnight no-network
+   rule, §6). An adapter uses a tool only if it resolves locally.
+
+**Adapter contract.** Every adapter exports four functions:
+
+| Function | Purpose |
+|---|---|
+| `detect(repo)` | Does this ecosystem apply? (lockfile/manifest heuristics, e.g. `package.json`, `pyproject.toml`) |
+| `available(repo)` | Can the tool run? Resolution is **local-only**: host repo's `node_modules/.bin` (or venv `bin/`), then `PATH`. Never `npx`-fetch, never install, never network. |
+| `run(repo, config)` | Invoke the tool, parse its native output, return signals conforming to the shared schema |
+| `explain()` | One-line description + install hint, used for degraded notices and by `/nightwatch init` |
+
+Detection without availability is not an error: it produces a `degraded` entry
+("dependency-cruiser not installed — layering and cycle signals unavailable; universal
+git signals used") and, once per repo, a `setup`-kind finding suggesting the daytime
+install. `/nightwatch init` runs `detect`/`available` for all adapters and offers the
+install commands interactively — installing tools is daytime work with a human present.
+
+**Normalized signals schema** — `out/signals-<date>.json`:
+
+```json
+{ "schema": 1, "date": "2026-07-08",
+  "sources": [{"extractor": "node-depcruise", "tool": "dependency-cruiser@18.0.0"},
+              {"extractor": "universal-git"}],
+  "degraded": [],
+  "signals": [ {
+    "kind": "layering-violation|cycle|orphan|unused-export|duplication|co-change|hotspot|growth|speculation",
+    "confidence": "exact|heuristic",
+    "evidence": [{"path": "src/ui/table.js", "line": 3}, {"path": "src/core/db.js"}],
+    "detail": "src/ui → src/core import violates declared layer rule ui ↛ core",
+    "source": "node-depcruise"
+} ] }
+```
+
+`confidence: exact` marks signals a real analyzer proved (a cycle dependency-cruiser
+found *is* a cycle); `heuristic` marks statistical ones (co-change coupling). The
+judgment layer weighs them accordingly and says which kind it is citing.
+
+**v0.1 adapters and what they replace:**
+
+| Adapter | Tool (host-provided) | Signals delivered | Replaces custom code for |
+|---|---|---|---|
+| `universal-git` | git only | co-change, hotspot, growth | — (this one stays custom; it's universal and small) |
+| `node-depcruise` | [dependency-cruiser](https://github.com/sverweij/dependency-cruiser) | dependency edges, cycles, orphans, layering-violation | JS/TS import graph + layering analysis |
+| `python-importlinter` | [import-linter](https://github.com/seddonym/import-linter) | layering-violation, independence/forbidden contract breaks | Python import graph + layering analysis |
+
+Candidate future adapters, same contract, not in v0.1: `knip` (JS unused
+exports/dependencies → `unused-export`/`speculation` signals), `vulture` (Python dead
+code). They are named here so the speculation-signal design assumes adapters, not
+custom AST analysis.
+
+**Layering rules are compiled, not reimplemented.** The user declares `layers:` once
+in `.nightwatch/config.yaml` (§7). Each adapter compiles that declaration into its
+tool's native rule format — a generated dependency-cruiser ruleset, generated
+import-linter contracts — written under `out/` (transient), and maps violations back
+to `layering-violation` signals. One declaration, N enforcers, zero custom graph code.
+If the host repo already has its own `.dependency-cruiser.cjs` or import-linter
+config, the adapter uses the *host's* config verbatim and reports that it did (the
+repo's own rules are a declaration too — principle 5).
+
+**Extension rule (normative).** Supporting a new ecosystem or analyzer means adding
+one file under `scripts/extractors/` implementing the contract, plus fixtures. If a
+new ecosystem seems to require changes elsewhere, the contract is what gets fixed.
+
+### 2.7 Tracking store abstraction
+
+**Decision for v0.1: the tracking layer stays custom** — `RELEASE.md` (human-facing
+tracker) plus `.nightwatch/ledger.jsonl` (append-only finding history). Rationale:
+both are zero-dependency, committed with the repo, human-diffable, and small; adopting
+Beads or Backlog.md now would impose a tool install on every host repository, which
+the portability gate forbids. This is a *reviewed* decision, not a default: the
+revisit trigger is when tracker round-trip maintenance (parse → merge → serialize)
+starts consuming real implementation effort, or when a host repo already runs one of
+those tools and wants Nightwatch to feed it.
+
+**What makes migration cheap later is the interface, so it is normative now.** All
+tracker and ledger I/O goes through `lib/tracker.js`, which exposes a backend-neutral
+store:
+
+```
+openTracker(repo, config)  → TrackerStore
+TrackerStore:
+  listItems(filter)                     // stable ids, status, section, evidence
+  upsertItem(item)                      // create or update; never deletes
+  completeItem(id, evidence)            // move to done with closing evidence
+  appendStatus(line)                    // dated status entry, capped history
+  recordFindings(findingsJson)          // ledger append + dedupe by finding id
+  recordFeedback(marks)                 // acted-on / dismissed backfill
+  query(q)                              // recurrence counts, demotion rule input
+  flush()                               // atomic write of whatever the backend owns
+```
+
+Backends: `markdown` (v0.1 — writes `RELEASE.md` + `ledger.jsonl`), `beads` and
+`backlogmd` (future — same interface over `bd` / `backlog` CLIs, subject to the same
+local-only availability probe as extractor adapters). Selected by
+`tracking.backend` in config; an unknown or unavailable backend is a `setup` finding
+and the run falls back to `markdown`.
+
+Constraints that keep every backend equivalent (and migration mechanical):
+
+- **Item ids are stable and backend-independent** (same content-hash scheme as
+  findings). A future migration is "replay items into the new store", not a parse of
+  prose.
+- **Evidence is structured** (`{path, line}` objects), never only prose, in every
+  backend.
+- **Human-owned content is marked and byte-preserved** — the markdown backend's
+  **Notes** section and human-authored item text; other backends must offer an
+  equivalent protected field.
+- **No module other than `lib/tracker.js` reads or writes `RELEASE.md` or
+  `ledger.jsonl`.** The §5 and §6 specs are written against the store interface.
+
+### 2.8 Language and type policy
+
+- **Plain JavaScript (CommonJS), Node ≥ 18, `js-yaml` as the only runtime
+  dependency.** No build step: the install contract is clone →
+  `npm install --omit=dev` → run. This is deliberate; TypeScript would cost either a
+  compile stage or a Node ≥ 22.18 engine bump for native type stripping, and the
+  portability gate values "runs anywhere Claude Code runs" over annotation syntax.
+- **Type safety comes from the checker, not the compiler.** Every file under
+  `scripts/` carries `// @ts-check`; shared shapes (findings, signals, tracker items,
+  config) are JSDoc `@typedef`s defined once in `lib/types.js` and imported via
+  `@type`/`@param` annotations everywhere they cross a module boundary.
+- **`tsc --noEmit` is part of `npm test`** (TypeScript is a devDependency only —
+  absent from a production install by `--omit=dev`). A type error fails CI exactly
+  like a failing unit test.
 
 ---
 
@@ -197,9 +380,13 @@ it must follow the implementation; a conflict is mechanically fixable,
 
 **Deterministic layer** — `surface-inventory.js` extracts the repo's *claimable
 surface*: CLI subcommands and flags (help-text or entrypoint parse), exported
-symbols, command/skill files, config keys read by code, file-tree shape. Extractor
-per ecosystem plus the universal fallback (file tree + command files + README code
-blocks). Output: `out/surface-<date>.json`.
+symbols, command/skill files, config keys read by code, file-tree shape. This stays
+custom code (principle 6c: no mature open-source tool inventories "what a repo claims
+to offer"), but it is structured like the adapters — per-ecosystem probes behind one
+schema, with the universal fallback (file tree + command files + README code blocks)
+when no probe matches. Where a tool adapter can supply part of the surface (e.g. a
+future `knip` adapter's export inventory), the probe consumes the adapter's signals
+instead of re-deriving them. Output: `out/surface-<date>.json`.
 
 **Judgment layer:**
 
@@ -261,27 +448,41 @@ Proposals only; code is never modified.
 **Config read:** `STATE.md` (`phase`, `authority.architecture`), config (`layers`,
 `ignore`, `extractors`, `caps.arch_candidates` default 7, `budget_tokens`).
 
-**Deterministic layer** — `arch-signals.js` (+ `git-signals.js`), emits
-`out/arch-signals-<date>.json`:
+**Deterministic layer** — `extract-signals.js`, the extractor runner (§2.6): runs
+`detect`/`available` for every adapter, invokes the matching available ones plus the
+universal built-ins, and merges everything into one `out/signals-<date>.json`. Signal
+classes and where they come from:
 
-- *Speculation:* interfaces/protocols/ABCs with exactly one implementation;
-  indirection with exactly one caller; config keys read nowhere; flags/options
-  untouched > 60 days. (Extractor-dependent; skipped with notice when degraded.)
+- *Layering:* declared `layers:` compiled into the matching tool's native ruleset
+  (dependency-cruiser for Node/TS, import-linter for Python); violations map to
+  `layering-violation` signals with `confidence: exact`. Only when `layers:` is
+  declared or the host repo carries its own tool config (§2.6). No adapter available
+  → skipped with a `degraded` notice, never approximated from custom graph code.
+- *Cycles, orphans, dependency structure:* tool adapters (`confidence: exact`).
+- *Speculation:* unused exports / config keys read nowhere / flags untouched > 60
+  days. Delivered by tool adapters where one exists (future `knip`/`vulture`);
+  otherwise limited to what universal signals support (TODO-density, stale-flag
+  heuristics from git), marked `confidence: heuristic`, with the gap stated in
+  `degraded`.
 - *Duplication:* near-duplicate names/signatures across modules; heavy import-set
-  overlap between modules.
+  overlap. Import-set overlap uses adapter dependency edges when available; the
+  name-similarity heuristic is universal.
 - *Hidden coupling:* files co-changing in > N commits across module boundaries —
-  pure git, always available.
-- *Layering:* dependency edges violating declared `layers:` rules. Only when declared.
+  `universal-git`, always available.
 - *Growth:* size and churn trends; hotspots with high churn and zero mentions in the
-  declared architecture document (only when `authority.architecture` exists).
+  declared architecture document (only when `authority.architecture` exists) —
+  `universal-git`, always available.
 
-**Judgment layer** — for each signal, the agent:
+**Judgment layer** — consumes only the normalized signals schema; for each signal,
+the agent:
 
 1. Reads the declared architecture authority doc if any; an abstraction that document
    mandates is `keep` even at one implementation — cited, not argued around. This
    context is exactly what pure metrics miss.
 2. Argues **both sides** ("earns its keep because… / speculative because…") before a
-   verdict: `keep` / `simplification-candidate` / `decision-needed`.
+   verdict: `keep` / `simplification-candidate` / `decision-needed`. Signals marked
+   `heuristic` need corroboration (a second independent signal or a targeted code
+   read) before they can ground a candidate; `exact` signals stand on their own.
 3. Attaches an estimated blast radius to each candidate (files, tests, public surface
    touched) so the morning reader can size the work at a glance.
 4. Adversarial pass: a second subagent attempts to refute each candidate; only
@@ -290,32 +491,47 @@ Proposals only; code is never modified.
    `phase: released` weights drift and coupling up; no phase → neutral.
 
 **Outputs:** findings JSON; brief section ≤ `caps.arch_candidates`, ranked, each with
-evidence pointers and blast radius; overflow to an appendix (ids only).
+evidence pointers and blast radius; overflow to an appendix (ids only). The brief's
+degraded-notices line names which adapters ran and which were skipped and why.
 
 **Safety rules (normative):** writes nothing outside `.nightwatch/`; never proposes
 removing anything the architecture authority names as intentional without flagging
 the relevant section; no overnight follow-up implementation — executing a
-simplification is a daytime session. Unparsable source is reported and skipped, never
-"fixed".
+simplification is a daytime session; never installs or downloads an analyzer (§2.6 —
+tool absence degrades, it is never "fixed" overnight). Unparsable source is reported
+and skipped, never "fixed".
 
-**Failure handling:** no extractor for the language → git-only signals plus
-`degraded` notice; shallow git history (< 20 commits) → co-change checks skipped with
-notice; budget exhausted → partial output labeled partial.
+**Failure handling:** no adapter for the language, or adapter's tool not installed →
+universal signals plus `degraded` notice naming the missing tool and its one-line
+install hint; adapter crashes or emits unparsable output → that adapter's signals
+dropped with a notice, everything else proceeds; shallow git history (< 20 commits) →
+co-change checks skipped with notice; budget exhausted → partial output labeled
+partial.
 
 **Acceptance criteria:**
 - [ ] Fixture with a one-implementation interface *with* an authority-doc mandate and
       one *without*: first → `keep` citing the doc; second → candidate.
 - [ ] Two modules co-changing in 8 commits → hidden-coupling finding from git data
-      alone, in a language with no extractor.
-- [ ] Declared `layers:` violated by one import → layering finding with both file
-      pointers; same fixture without `layers:` → no finding, one not-configured
-      notice.
+      alone, in a language with no adapter.
+- [ ] Node fixture with dependency-cruiser installed and declared `layers:` violated
+      by one import → layering finding with both file pointers, `confidence: exact`,
+      sourced from the compiled ruleset; same fixture *without* dependency-cruiser
+      installed → no layering finding, one degraded notice with the install hint, and
+      a `setup` finding (first run only).
+- [ ] Python fixture with import-linter and a violated `layers:` declaration → same
+      behavior via the `python-importlinter` adapter.
+- [ ] Fixture repo carrying its own `.dependency-cruiser.cjs` → adapter uses the
+      host config, reports that it did, and emits violations from the host's rules.
+- [ ] Same declared `layers:` fixture without `layers:` and without host tool
+      config → no finding, one not-configured notice.
 - [ ] Fresh zero-config repo → valid (possibly near-empty) report, zero writes
       outside `.nightwatch/`.
 - [ ] Unchanged repo, two runs → identical finding ids; recurrence counted in the
       ledger, nothing re-reported as new.
 
-**Tests:** one fixture per signal class; adversarial-pass survival asserted on a
+**Tests:** one fixture per signal class; adapter contract conformance (each adapter
+run against a fixture with the tool present, absent, and crashing); layers-to-ruleset
+compilation golden files for both tools; adversarial-pass survival asserted on a
 known-good and a known-refutable candidate; determinism (shuffled file order →
 identical signals JSON).
 
@@ -327,7 +543,12 @@ identical signals JSON).
 done / what remains / what's next / how close" survives between sessions without
 human bookkeeping.
 
-**Path and format: `RELEASE.md` at repo root.** Root, not hidden in `.nightwatch/`,
+**All tracker I/O goes through the tracking store (§2.7).** This section specifies
+behavior against the store interface; the concrete file format below is the
+`markdown` backend's serialization, which is the v0.1 default and the only backend
+shipped.
+
+**Markdown backend: `RELEASE.md` at repo root.** Root, not hidden in `.nightwatch/`,
 because it's the repo's answer to "how close is this?" for humans and future
 collaborators. Markdown with YAML frontmatter for machine fields, fixed section
 headings, stable item ids, and one human-owned section the machine never touches:
@@ -355,9 +576,9 @@ updated: 2026-07-08
 ## Notes (human-owned — never machine-edited)
 ```
 
-Item format: `- [ ] RP-014 — <title> (evidence: path:line | spec §)`. Ids are stable;
-completed items move to **Done** with their closing evidence rather than being
-deleted.
+Item format: `- [ ] RP-014 — <title> (evidence: path:line | spec §)`. Ids are stable
+and backend-independent; completed items move to **Done** with their closing evidence
+rather than being deleted.
 
 **Where "done" comes from — two sources, kept distinct:**
 
@@ -369,16 +590,17 @@ deleted.
    public repo: LICENSE present; README has install + quickstart sections; CI config
    exists (and last test run passes, if cheaply runnable); no committed-secret
    patterns; TODO/FIXME count under threshold; version/tag consistency; CHANGELOG
-   presence. Configurable via `release_checks.disable`.
+   presence. Configurable via `release_checks.disable`. (Custom code by principle
+   6c — no maintained open-source tool covers this checklist portably.)
 
 **Procedure (judgment layer):**
 
-1. Run `release-checks.js`; read the `release:` block; read the current `RELEASE.md`
-   (or instantiate from the template on first run); read tonight's reconcile and
-   arch-review findings JSON **if present** — the command is fully functional
-   standalone.
-2. Reconcile the document against reality: check off items whose evidence now exists
-   (recording the evidence link); add newly discovered items; promote
+1. Run `release-checks.js`; read the `release:` block; open the tracking store
+   (instantiating from the template on the markdown backend's first run); read
+   tonight's reconcile and arch-review findings JSON **if present** — the command is
+   fully functional standalone.
+2. Reconcile the store against reality: complete items whose evidence now exists
+   (recording the evidence link); upsert newly discovered items; promote
    `human-decision` findings into **Human decisions needed** and severity-1 findings
    into **Release blockers** — cross-referenced by finding id, so they clear
    automatically when the source finding clears.
@@ -386,18 +608,21 @@ deleted.
    tagged `(stale? — confirm)` instead.
 4. Recompute `progress:` (fraction of definition-of-done items plus blockers
    resolved — a coarse honest number, not a promise); refresh **Next actions** (top
-   3, each pointing at a specific file or spec); prepend one status-update line.
+   3, each pointing at a specific file or spec); append one status line; `flush()`.
 5. Emit a ≤ 12-line brief section: progress delta since last run, new blockers, new
    decisions, next actions.
 
-**Safety rules (normative):** the only repo file it writes is `RELEASE.md`; the
-**Notes** section and human-authored item text are byte-preserved; it summarizes
+**Safety rules (normative):** the only repo file the markdown backend writes is
+`RELEASE.md`; the **Notes** section and human-authored item text are byte-preserved
+(every backend must honor the equivalent protected field, §2.7); it summarizes
 distance-to-release but never *redefines* the target — target changes are human edits
 to `STATE.md`.
 
 **Failure handling:** malformed `RELEASE.md` (hand-edit broke the structure) → the
 run writes nothing, emits a `setup` finding pointing at the parse error, and the
-brief carries last night's snapshot with a staleness notice.
+brief carries last night's snapshot with a staleness notice. `tracking.backend` set
+to an unknown or unavailable backend → `setup` finding, fall back to `markdown` for
+this run without migrating anything.
 
 **Acceptance criteria:**
 - [ ] Fresh repo, no `STATE.md` → valid `RELEASE.md` from generic checks, header
@@ -411,10 +636,15 @@ brief carries last night's snapshot with a staleness notice.
 - [ ] Reconcile emits a severity-1 finding → it appears under Release blockers the
       same night, and moves to Done the night after the fix lands.
 - [ ] No-change night → only `updated:` and one "no change" status line differ.
+- [ ] `tracking.backend: beads` with no `bd` on PATH → `setup` finding, markdown
+      fallback, no crash, no partial writes.
+- [ ] A second (in-memory test) backend driven through the same store interface
+      passes the same behavioral tests as the markdown backend — proving §5 is
+      specified against the interface, not the file format.
 
 **Tests:** document round-trip (parse → serialize → byte-identical); id stability
 under retitling; progress arithmetic; merge behavior when both sources express the
-same criterion.
+same criterion; store-interface conformance suite run against every backend.
 
 ---
 
@@ -432,35 +662,41 @@ runs on whatever JSON exists, so partial nights degrade cleanly.
 
 **`init` mode (daytime, interactive — the one mode that may ask questions):** detects
 missing `STATE.md` / config; interviews the human (authority per area, phase, release
-target and definition of done, optional layers); writes both files from templates;
-runs each job once in dry-run; shows the first brief. Overnight mode never creates or
-edits declaration files.
+target and definition of done, optional layers); probes every extractor adapter
+(§2.6) and offers install commands for detected-but-unavailable tools — the only
+moment tool installation is ever suggested; writes both declaration files from
+templates; runs each job once in dry-run; shows the first brief. Overnight mode never
+creates or edits declaration files, and never installs anything.
 
 **Brief assembly** (`collect-brief.js` — deterministic, because truncation must be
 mechanical; ranking *within* jobs is the jobs' judgment):
 
 - Fixed section order: release-progress delta → human decisions (merged across jobs)
-  → reconcile findings → arch candidates → failures & degraded notices → appendix
-  pointer.
+  → reconcile findings → arch candidates → failures & degraded notices (including
+  which extractor adapters ran, were skipped, or crashed) → appendix pointer.
 - Global cap `caps.brief_total` (default 25). Interleave priority when over cap:
   blockers > human decisions > drift > arch > nice-to-have.
 - Writes `briefs/<date>.md`, overwrites `MORNING.md`, appends per-job ledger lines
-  (date, job, tokens, findings count, degraded flags).
+  (date, job, tokens, findings count, degraded flags) — through the tracking store.
 
 **Morning feedback loop:** brief items render as checkboxes (`acted-on` /
-`dismissed`); the next run backfills the marks into `ledger.jsonl`. The demotion rule
-(principle 3) is computed here: a member job with zero acted-on findings for two
-consecutive runs is flagged for retirement or redesign in the next brief — the system
-proposes pruning itself.
+`dismissed`); the next run backfills the marks into the ledger via
+`recordFeedback()`. The demotion rule (principle 3) is computed from `query()`: a
+member job with zero acted-on findings for two consecutive runs is flagged for
+retirement or redesign in the next brief — the system proposes pruning itself.
 
 **Safety rules (normative — these bind every member job; the orchestrator enforces
 them by contract and its prompt restates them):**
 
 - Never implements features; never refactors; never modifies source code.
-- Write surface, exhaustively: `.nightwatch/**`, `RELEASE.md`, patch files under
-  `out/`, and (opt-in) `nightwatch/*` branches via temporary worktree. Nothing else,
-  ever — never the user's current branch or working tree.
-- Never pushes, never creates PRs or issues, never posts externally; no network.
+- Write surface, exhaustively: `.nightwatch/**`, `RELEASE.md` (markdown tracking
+  backend), patch files under `out/`, and (opt-in) `nightwatch/*` branches via
+  temporary worktree. Nothing else, ever — never the user's current branch or working
+  tree. A non-markdown tracking backend's write surface is its own store, declared in
+  config.
+- Never pushes, never creates PRs or issues, never posts externally; **no network** —
+  which includes never fetching or installing analyzer tools (§2.6); absence
+  degrades, it never triggers a download.
 - Idempotent per date: a second same-night invocation sees `state.json` plus the
   dated brief and exits without re-spending tokens (`--force` to override).
 - Runs under a constrained permission profile in which prompts are impossible, not
@@ -477,10 +713,15 @@ the failure. No brief at all is itself a signal; the collector always attempts a
 - [ ] Second run the same night → no token spend, no file changes.
 - [ ] 60 synthetic findings across jobs → brief holds exactly `caps.brief_total`,
       interleaved by priority class, appendix lists the remainder by id.
-- [ ] Full run on a repo with no config and no `STATE.md` → valid brief whose top
-      items are the setup findings; zero writes outside the declared write surface
-      (asserted by `git status` plus a filesystem snapshot diff).
+- [ ] Full run on a repo with no config, no `STATE.md`, and no analyzer tools
+      installed → valid brief whose top items are the setup findings, degraded
+      notices name the missing tools, and there are zero writes outside the declared
+      write surface (asserted by `git status` plus a filesystem snapshot diff) and
+      zero network access (asserted by running with network disabled).
 - [ ] After 3 simulated nights, the ledger answers the demotion query mechanically.
+- [ ] The identical checkout passes the full acceptance run in both distribution
+      modes: registered as a plugin (`CLAUDE_PLUGIN_ROOT`) and as symlinked commands
+      with `NIGHTWATCH_ROOT` set.
 
 ---
 
@@ -509,8 +750,13 @@ budget_tokens: {repo-reconcile: 200000, arch-review: 300000, release-progress: 1
 effort:   {repo-reconcile: medium, arch-review: high, release-progress: medium}
 caps:     {brief_total: 25, reconcile: 10, arch_candidates: 7}
 ignore:   ["dist/**", "vendor/**", "node_modules/**"]
-extractors: auto            # or a list, e.g. [node, python]
+extractors: auto            # or a list, e.g. [universal-git, node-depcruise]
+                            # tool resolution is always local-only: host repo's
+                            # node_modules/.bin (or venv), then PATH; never installed
+tracking:
+  backend: markdown         # v0.1 ships markdown only; future: beads | backlogmd
 layers: []                  # e.g. [{name: core, path: "src/core/**", may_depend_on: []}]
+                            # compiled into each available tool's native ruleset (§2.6)
 release_checks: {disable: []}
 patch_branch: false         # true → also apply derived-doc patches on nightwatch/* branches
 timeout_minutes: 30
@@ -522,25 +768,34 @@ timeout_minutes: 30
 
 ## 8. Build order
 
-1. **Plugin skeleton + `lib/config.js` + `lib/findings.js`.** Manifest; config
-   precedence (shipped defaults ← `config.yaml` ← `STATE.md` yaml block); findings
-   schema, stable-id hashing, ledger append. Everything depends on these.
+1. **Plugin skeleton + `lib/types.js` + `lib/config.js` + `lib/findings.js` +
+   `lib/tracker.js`.** Manifest; the type-check gate (`// @ts-check` everywhere,
+   `tsc --noEmit` wired into `npm test`, §2.8); config precedence (shipped defaults ←
+   `config.yaml` ← `STATE.md` yaml block); findings schema, stable-id hashing; the
+   tracking-store interface with the markdown backend and an in-memory test backend.
+   Everything depends on these.
 2. **`/release-progress`.** First shippable value: needs only `release-checks.js`
-   and the document round-trip — no extractors — and it most directly attacks the
+   and the tracking store — no extractors — and it most directly attacks the
    losing-track problem. Dogfood standalone for a few days.
-3. **`/repo-reconcile`.** `surface-inventory.js` with the Node extractor plus the
+3. **`/repo-reconcile`.** `surface-inventory.js` with the Node probe plus the
    universal fallback; authority semantics; patch emission.
-4. **`/nightwatch`.** Orchestrator over the two nightly jobs, `init`, brief
-   collector, ledger. Schedule it and start the trust ramp.
-5. **`/arch-review`.** Heaviest judgment load and weekly anyway; it joins a system
-   that has already earned morning attention.
+4. **`/nightwatch`.** Orchestrator over the two nightly jobs, `init` (including the
+   adapter probe/install-hint flow), brief collector, ledger. Schedule it and start
+   the trust ramp.
+5. **Extractor runner + tool adapters (`extract-signals.js`, `node-depcruise`,
+   `python-importlinter`), then `/arch-review`.** The adapters land with the job that
+   consumes them; arch-review carries the heaviest judgment load and is weekly
+   anyway, so it joins a system that has already earned morning attention.
 
 ### The portability gate — every increment must pass this before merging
 
 Install the plugin into a **fresh, unrelated fixture repo** — no `STATE.md`, no
-config, a language without an extractor — and run `/nightwatch`. Required result: a
-valid brief whose top findings are the setup declarations, zero guessed authority,
-zero writes outside the declared write surface, clean exit. Then run the identical
-build against 2–3 real repositories that differ only in their local
-`STATE.md`/`config.yaml`. If any of them needs a plugin-side change, that change must
-be a new config key or a new extractor — never a special case naming a repository.
+config, a language without an adapter, no analyzer tools installed — and run
+`/nightwatch`. Required result: a valid brief whose top findings are the setup
+declarations, zero guessed authority, zero writes outside the declared write surface,
+zero network access, clean exit. Then run the identical build against 2–3 real
+repositories that differ only in their local `STATE.md`/`config.yaml` (at least one
+with dependency-cruiser or import-linter installed, to exercise a tool adapter end to
+end). If any of them needs a plugin-side change, that change must be a new config
+key, a new extractor adapter, or a new tracking backend — never a special case naming
+a repository.
