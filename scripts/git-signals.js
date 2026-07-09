@@ -161,7 +161,7 @@ function universalGitSignals(root, opts = {}) {
   signals.push(makeSignal({ kind: 'todo-density', confidence: 'heuristic', source: SOURCE, evidence: todoEvidence,
     detail: `${markers} TODO/FIXME/XXX/HACK marker(s) across ${filesWithMarkers} file(s)` }));
 
-  return { sources: [{ name: SOURCE, signals: signals.length }], degraded, signals, raw: gs };
+  return { sources: [{ extractor: SOURCE }], degraded, signals, raw: gs };
 }
 
 function main() {

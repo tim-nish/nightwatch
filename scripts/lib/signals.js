@@ -22,8 +22,14 @@ const SCHEMA_VERSION = 1;
 const CONFIDENCE = ['exact', 'heuristic'];
 
 // Known signal kinds. Extractors may emit only these so the judgment layer reasons over a
-// closed set; new kinds are added here deliberately, never ad hoc.
-const KINDS = ['hotspot', 'hidden-coupling', 'growth-trend', 'file-tree', 'readme', 'todo-density'];
+// closed set; new kinds are added here deliberately, never ad hoc. The first group is the
+// universal-git built-in's; the second is what tool adapters (§2.6) contribute.
+const KINDS = [
+  // universal-git built-ins (story 5.1)
+  'hotspot', 'hidden-coupling', 'growth-trend', 'file-tree', 'readme', 'todo-density',
+  // tool-adapter kinds (§2.6): things a real analyzer proves or a judgment layer names
+  'layering-violation', 'cycle', 'orphan', 'unused-export', 'duplication', 'speculation',
+];
 
 /**
  * Normalize one evidence entry to a structured `{path, line?}` object (identical contract to
