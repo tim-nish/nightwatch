@@ -66,6 +66,35 @@ function parseRelease(text) {
   return { head, sections, raw: text };
 }
 
+/**
+ * Rewrite a single frontmatter field inside a parsed `head` block, operating line-by-line so
+ * every other frontmatter line (e.g. a quoted `target:`) is preserved byte-for-byte. `value`
+ * is the already-formatted scalar text; pass `null` to delete the key. Returns `head` unchanged
+ * when there is no `---` frontmatter fence (nothing safe to edit). This is the sole mechanism by
+ * which a job updates RELEASE.md's header — the tracker stays the only sanctioned writer (FR16).
+ */
+function setFrontmatterField(head, key, value) {
+  const lines = head.split('\n');
+  if (lines[0] !== '---') return head;
+  let end = -1;
+  for (let i = 1; i < lines.length; i++) { if (lines[i] === '---') { end = i; break; } }
+  if (end === -1) return head;
+  const re = new RegExp('^' + key + ':');
+  let idx = -1;
+  for (let i = 1; i < end; i++) { if (re.test(lines[i])) { idx = i; break; } }
+  if (value == null) {
+    if (idx !== -1) lines.splice(idx, 1);
+  } else if (idx !== -1) {
+    lines[idx] = `${key}: ${value}`;
+  } else {
+    lines.splice(end, 0, `${key}: ${value}`);
+  }
+  return lines.join('\n');
+}
+
+/** Double-quote a string as a YAML scalar (safe for em dashes, backticks, colons). */
+function yamlQuote(s) { return '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'; }
+
 const ITEM_RE = /^- \[([ xX])\] (.*?)(?:\s*<!-- nw:(IT-[0-9a-f]{6}) -->)?\s*$/;
 
 /** Parse item checklist lines out of a section body; non-item lines are section preamble. */
@@ -285,9 +314,21 @@ function openTracker(repo, config) {
   if (backend === 'memory') {
     const core = makeCore(null);
     const memLedger = [];
+    let memHead = {};
     return Object.assign(core, {
       backend: 'memory',
       setupFindings,
+      updateHead(patch) {
+        if (!patch || typeof patch !== 'object') return memHead;
+        for (const k of ['progress', 'updated', 'notice', 'target']) {
+          if (Object.prototype.hasOwnProperty.call(patch, k)) {
+            if (patch[k] == null) delete memHead[k]; else memHead[k] = patch[k];
+          }
+        }
+        core.markDirty();
+        return memHead;
+      },
+      readHead() { return { ...memHead }; },
       recordFindings(findings, meta) {
         const { findings: deduped } = dedupeFindings(findings || []);
         for (const f of deduped) memLedger.push(toLedgerRow(f, meta));
@@ -310,6 +351,33 @@ function openTracker(repo, config) {
   return Object.assign(core, {
     backend: 'markdown',
     setupFindings,
+    /**
+     * Update RELEASE.md frontmatter fields (progress/updated/notice) in the parsed `head`.
+     * Only keys explicitly present in `patch` are touched; pass `null` to remove a key
+     * (e.g. drop the generic-criteria notice once a `release:` block is declared). Marks the
+     * document dirty only when the head actually changes, so an unchanged doc still round-trips
+     * byte-identically (FR16).
+     * @param {{ progress?: number|null, updated?: string|null, notice?: string|null, target?: string|null }} patch
+     */
+    updateHead(patch) {
+      if (!patch || typeof patch !== 'object') return null;
+      let head = model.head;
+      if (Object.prototype.hasOwnProperty.call(patch, 'progress')) {
+        head = setFrontmatterField(head, 'progress', patch.progress == null ? null : String(patch.progress));
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, 'updated')) {
+        head = setFrontmatterField(head, 'updated', patch.updated == null ? null : String(patch.updated));
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, 'notice')) {
+        head = setFrontmatterField(head, 'notice', patch.notice == null ? null : yamlQuote(patch.notice));
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, 'target')) {
+        head = setFrontmatterField(head, 'target', patch.target == null ? null : yamlQuote(patch.target));
+      }
+      if (head !== model.head) { model.head = head; core.markDirty(); }
+      return { head: model.head };
+    },
+    readHead() { return model.head; },
     recordFindings(findings, meta) {
       const { findings: deduped } = dedupeFindings(findings || []);
       appendLedgerRows(repo, deduped.map((f) => toLedgerRow(f, meta)));
