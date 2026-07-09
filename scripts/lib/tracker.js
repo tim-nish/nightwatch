@@ -17,6 +17,32 @@ const { dedupeFindings } = require('./findings');
 
 const KNOWN_BACKENDS = ['markdown', 'memory'];
 
+// Recognized-but-future backends (§2.7): each maps to the CLI it drives. They are subject to the
+// same local-only availability probe as extractor adapters (§2.6) — resolve the binary on PATH,
+// never install, never touch the network. v0.1 ships no implementation for them, so a requested
+// recognized backend always falls back to markdown; when its tool is missing the fallback names
+// the tool, so the daytime fix is obvious.
+const RECOGNIZED_BACKENDS = { beads: 'bd', backlogmd: 'backlog' };
+
+/**
+ * Resolve an executable by name on PATH (local-only; no network, no install). Returns the absolute
+ * path if an executable candidate exists, else null. Mirrors the adapter availability contract.
+ * @param {string} bin @returns {string|null}
+ */
+function resolveOnPath(bin) {
+  const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  const exts = process.platform === 'win32'
+    ? (process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM').split(';').filter(Boolean)
+    : [''];
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      const cand = path.join(dir, bin + ext);
+      try { fs.accessSync(cand, fs.constants.X_OK); return cand; } catch { /* keep looking */ }
+    }
+  }
+  return null;
+}
+
 // Store-level item sections and the RELEASE.md headings they render into. Completed items
 // move to the shared Done section regardless of their origin section (never deleted).
 const SECTIONS = ['implementation', 'documentation', 'blockers', 'decisions', 'nice', 'next'];
@@ -300,14 +326,28 @@ function openTracker(repo, config) {
   const setupFindings = [];
   let backend = requested;
   if (!KNOWN_BACKENDS.includes(backend)) {
-    // Unknown/unavailable backend: surface a setup finding and fall back to markdown with no
-    // partial writes and no migration (FR16).
-    setupFindings.push({
-      kind: 'setup', severity: 3, action: 'daytime-task', verified: false,
-      title: `Unknown tracking backend "${requested}"; falling back to markdown`,
-      evidence: [{ path: '.nightwatch/config.yaml' }],
-      id: itemId(`setup|tracking-backend|${requested}`),
-    });
+    // Recognized-but-future backend: probe its CLI locally. Missing tool → name it; present but
+    // not yet implemented → say so. Truly-unknown names take the generic path. Every branch falls
+    // back to markdown with no migration and no partial write on open (FR16).
+    if (Object.prototype.hasOwnProperty.call(RECOGNIZED_BACKENDS, requested)) {
+      const bin = RECOGNIZED_BACKENDS[requested];
+      const found = resolveOnPath(bin);
+      setupFindings.push({
+        kind: 'setup', severity: 3, action: 'daytime-task', verified: false,
+        title: found
+          ? `Tracking backend "${requested}" is not yet implemented (v0.1 ships markdown only); falling back to markdown`
+          : `Tracking backend "${requested}" needs "${bin}" on PATH, which was not found; falling back to markdown`,
+        evidence: [{ path: '.nightwatch/config.yaml' }],
+        id: itemId(`setup|tracking-backend|${requested}`),
+      });
+    } else {
+      setupFindings.push({
+        kind: 'setup', severity: 3, action: 'daytime-task', verified: false,
+        title: `Unknown tracking backend "${requested}"; falling back to markdown`,
+        evidence: [{ path: '.nightwatch/config.yaml' }],
+        id: itemId(`setup|tracking-backend|${requested}`),
+      });
+    }
     backend = 'markdown';
   }
 
@@ -410,5 +450,5 @@ function toLedgerRow(f, meta) {
 
 module.exports = {
   openTracker, itemId, parseRelease, renderRelease, seedFromRelease,
-  KNOWN_BACKENDS, SECTIONS, HEADING_BY_SECTION, ledgerPath,
+  KNOWN_BACKENDS, RECOGNIZED_BACKENDS, SECTIONS, HEADING_BY_SECTION, ledgerPath,
 };
