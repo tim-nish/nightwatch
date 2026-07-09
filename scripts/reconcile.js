@@ -8,7 +8,8 @@
 // are the judgment layer's job (story 3.3); the adversarial refute pass is 3.4.
 const path = require('path');
 const fs = require('fs');
-const { parseArgs, repoRoot, todayISO, exists, readFileSafe, walkFiles, writeJSON, outDir, globToRegExp, ensureDir } = require('./lib/util');
+const os = require('os');
+const { parseArgs, repoRoot, todayISO, exists, readFileSafe, walkFiles, writeJSON, outDir, globToRegExp, ensureDir, git, isGitRepo } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
 const { inventory } = require('./surface-inventory');
 const { makeFinding, SCHEMA_VERSION } = require('./lib/findings');
@@ -137,10 +138,61 @@ function extractAssertionClaims(docPath, text) {
 }
 
 /**
+ * Opt-in patch branch (FR21). Applies the already-emitted patch on branch
+ * `nightwatch/reconcile/<date>`, built entirely inside a TEMPORARY git worktree so the user's
+ * checked-out branch and working tree are never touched. The branch ends up holding EXACTLY the
+ * one patch commit on top of the current HEAD. Idempotent: an existing branch of the same name is
+ * hard-reset (via `checkout -B`) to that single commit. On any failure nothing half-built is left
+ * behind — the temp worktree is removed and a freshly-created branch is deleted — and a note is
+ * returned for `degraded` rather than thrown. Never mutates a repo file in place (normative safety).
+ * @param {string} root repo root
+ * @param {string} patchAbsPath absolute path to the emitted patch file
+ * @param {string} branch e.g. `nightwatch/reconcile/2000-01-01`
+ * @param {string} message commit message for the single patch commit
+ * @returns {{ ok: boolean, note: string|null }}
+ */
+function buildPatchBranch(root, patchAbsPath, branch, message) {
+  if (!isGitRepo(root)) return { ok: false, note: `patch_branch: ${root} is not a git repository — branch ${branch} not created` };
+  if (git(root, ['rev-parse', 'HEAD']) == null) return { ok: false, note: `patch_branch: no commits yet — branch ${branch} not created` };
+  // A fresh, non-existent path under the OS tmp (NOT inside the user's tree) for `worktree add`.
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'nw-reconcile-'));
+  const wt = path.join(parent, 'wt');
+  let wtCreated = false, branchCreated = false, ok = false, note = null;
+  try {
+    if (git(root, ['worktree', 'add', '--detach', wt, 'HEAD']) == null) {
+      note = `patch_branch: could not create temporary worktree — branch ${branch} not created`;
+      return { ok, note };
+    }
+    wtCreated = true;
+    // Create or hard-reset the branch to HEAD *inside the temp worktree* (never the user's tree).
+    if (git(wt, ['checkout', '-B', branch]) == null) {
+      note = `patch_branch: could not create branch ${branch} in the temporary worktree`;
+      return { ok, note };
+    }
+    branchCreated = true;
+    if (git(wt, ['apply', patchAbsPath]) == null) {
+      note = `patch_branch: patch did not apply cleanly — branch ${branch} not created`;
+      return { ok, note };
+    }
+    if (git(wt, ['add', '-A']) == null || git(wt, ['commit', '-m', message]) == null) {
+      note = `patch_branch: could not commit the patch on branch ${branch}`;
+      return { ok, note };
+    }
+    ok = true;
+    return { ok, note };
+  } finally {
+    // Tear the transient worktree down first (a branch checked out in a worktree can't be deleted).
+    if (wtCreated) { git(root, ['worktree', 'remove', '--force', wt]); git(root, ['worktree', 'prune']); }
+    if (!ok && branchCreated) git(root, ['branch', '-D', branch]);
+    try { fs.rmSync(parent, { recursive: true, force: true }); } catch { /* best-effort */ }
+  }
+}
+
+/**
  * Extract-and-verify plus the judgment layer (authority → direction-of-fix + patch emission).
  * @param {string} root
  * @param {{date?: string}} [opts]
- * @returns {{ degraded: string[], findings: any[], claims: any[], unverifiable: any[], stopped: boolean, patch: string|null, patchPath: string|null, human_decisions: string[] }}
+ * @returns {{ degraded: string[], findings: any[], claims: any[], unverifiable: any[], stopped: boolean, patch: string|null, patchPath: string|null, patchBranch: string|null, human_decisions: string[] }}
  */
 function reconcile(root, opts = {}) {
   const date = opts.date || todayISO();
@@ -156,7 +208,7 @@ function reconcile(root, opts = {}) {
     const b = inv.blocking[0];
     findings.push(makeFinding('repo-reconcile', { kind: 'blocker', severity: 5, action: 'human-decision', verified: false,
       title: b.reason, locus: 'surface:blocking', evidence: b.evidence || [], extra: undefined }));
-    return { degraded, findings, claims, unverifiable, stopped: true, patch: null, patchPath: null, human_decisions: findings.map((f) => f.id) };
+    return { degraded, findings, claims, unverifiable, stopped: true, patch: null, patchPath: null, patchBranch: null, human_decisions: findings.map((f) => f.id) };
   }
 
   // No declared authority → detection-only mode: conflicts still reported, but the setup finding
@@ -251,10 +303,19 @@ function reconcile(root, opts = {}) {
     patch += unifiedDiffDelete(p, text, [...patchDeletes.get(p)]);
   }
   let patchPath = null;
+  let patchBranch = null;
   if (patch) {
     patchPath = path.join(outDir(root), `reconcile-${date}.patch`);
     ensureDir(path.dirname(patchPath));
     fs.writeFileSync(patchPath, patch);
+    // Opt-in only (default false): additionally land the patch on nightwatch/reconcile/<date>,
+    // built in a throwaway worktree so the user's branch/working tree stay byte-identical (FR21).
+    if (config.patch_branch === true) {
+      const branch = `nightwatch/reconcile/${date}`;
+      const res = buildPatchBranch(root, patchPath, branch, `nightwatch: reconcile ${date} — apply derived-doc patch`);
+      if (res.ok) patchBranch = branch;
+      else if (res.note) degraded.push(res.note);
+    }
   }
 
   // Cap the brief section by user-facing severity (default 10), setup ahead of drift.
@@ -263,7 +324,7 @@ function reconcile(root, opts = {}) {
   findings.push(...ordered);
   const human_decisions = ordered.filter((f) => f.action === 'human-decision').map((f) => f.id);
 
-  return { degraded, findings, claims, unverifiable, stopped: false, patch: patch || null, patchPath, human_decisions };
+  return { degraded, findings, claims, unverifiable, stopped: false, patch: patch || null, patchPath, patchBranch, human_decisions };
 }
 
 function main() {
@@ -273,7 +334,7 @@ function main() {
   const res = reconcile(root, { date });
   const patch_path = res.patchPath ? `.nightwatch/out/reconcile-${date}.patch` : null;
   const doc = { schema: SCHEMA_VERSION, job: 'repo-reconcile', date, degraded: res.degraded, findings: res.findings,
-    human_decisions: res.human_decisions, patch_path, claims: res.claims, unverifiable: res.unverifiable, stopped: res.stopped };
+    human_decisions: res.human_decisions, patch_path, patch_branch: res.patchBranch, claims: res.claims, unverifiable: res.unverifiable, stopped: res.stopped };
   writeJSON(path.join(outDir(root), `repo-reconcile-${date}.json`), doc);
   const drifted = res.findings.filter((f) => f.kind === 'drift').length;
   if (res.findings.length === 0) process.stdout.write('0 findings\n');
