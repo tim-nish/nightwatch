@@ -1,6 +1,6 @@
 'use strict';
 const assert = require('assert');
-const { tmpRepo, write } = require('./helpers');
+const { tmpRepo, write, gitInit, commit, git } = require('./helpers');
 const { releaseChecks } = require('../scripts/release-checks');
 
 function byId(res) { const m = {}; for (const c of res.checks) m[c.id] = c; return m; }
@@ -58,5 +58,45 @@ module.exports = {
     const c = byId(releaseChecks(r));
     assert.strictEqual(c.changelog.status, 'skip');
     assert.match(c.changelog.detail, /disabled/);
+  },
+
+  'release-checks: CI check surfaces the runnable test entrypoint (last-test-run hook)': () => {
+    const r = tmpRepo();
+    write(r, '.github/workflows/ci.yml', 'name: ci');
+    write(r, 'package.json', JSON.stringify({ scripts: { test: 'node test/run.js' } }));
+    const c = byId(releaseChecks(r));
+    assert.strictEqual(c.ci_present.status, 'pass');
+    assert.strictEqual(c.ci_present.test_command, 'npm test');
+    assert.match(c.ci_present.detail, /npm test/);
+  },
+
+  'release-checks: version matching the latest tag passes': () => {
+    const r = tmpRepo();
+    gitInit(r);
+    write(r, 'package.json', JSON.stringify({ version: '1.0.0' }));
+    commit(r, 'init');
+    git(r, ['tag', 'v1.0.0']);
+    const c = byId(releaseChecks(r));
+    assert.strictEqual(c.version_tag.status, 'pass');
+  },
+
+  'release-checks: version disagreeing with the latest tag fails': () => {
+    const r = tmpRepo();
+    gitInit(r);
+    write(r, 'package.json', JSON.stringify({ version: '9.9.9' }));
+    commit(r, 'init');
+    git(r, ['tag', 'v1.0.0']);
+    const c = byId(releaseChecks(r));
+    assert.strictEqual(c.version_tag.status, 'fail');
+    assert.match(c.version_tag.detail, /9\.9\.9/);
+  },
+
+  'release-checks: output is byte-identical across repeated runs (NFR8)': () => {
+    const r = tmpRepo();
+    write(r, 'LICENSE', 'MIT');
+    write(r, 'README.md', '# Demo\n## Installation\nx\n## Usage\ny\n');
+    write(r, '.github/workflows/ci.yml', 'name: ci');
+    write(r, 'CHANGELOG.md', '# Changelog');
+    assert.strictEqual(JSON.stringify(releaseChecks(r)), JSON.stringify(releaseChecks(r)));
   },
 };

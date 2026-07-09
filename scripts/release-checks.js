@@ -26,9 +26,33 @@ function checkReadmeSections(root, files) {
   return { status: 'fail', evidence: [{ path: f }], detail: 'README missing section(s): ' + missing.join(', ') };
 }
 
+// A "cheaply runnable" test entrypoint the CI would exercise — detected from declared
+// config only, never executed (running arbitrary tests would be neither cheap nor
+// deterministic, violating NFR8). This is the "last test run if cheaply runnable" hook:
+// we surface *what* CI runs so the consuming brief can attribute a red build.
+function detectTestCommand(root, files) {
+  const pkgText = readFileSafe(path.join(root, 'package.json'));
+  if (pkgText) {
+    try {
+      const scripts = JSON.parse(pkgText).scripts;
+      const t = scripts && scripts.test;
+      if (typeof t === 'string' && t.trim() && !/no test specified/i.test(t)) return 'npm test';
+    } catch { /* unparsable package.json — fall through */ }
+  }
+  const mkRel = files.find((f) => /^(Makefile|makefile|GNUmakefile)$/.test(f));
+  if (mkRel && /^test\s*:/m.test(readFileSafe(path.join(root, mkRel)) || '')) return 'make test';
+  if (files.some((f) => /^(pytest\.ini|tox\.ini|noxfile\.py)$/.test(f))) return 'pytest';
+  return null;
+}
+
 function checkCI(root, files) {
   const ci = files.find((f) => /^\.github\/workflows\/.+\.ya?ml$/i.test(f) || /^\.gitlab-ci\.yml$/i.test(f) || /^\.circleci\/config\.yml$/i.test(f) || /(^|\/)azure-pipelines\.yml$/i.test(f));
-  return ci ? { status: 'pass', evidence: [{ path: ci }] } : { status: 'fail', detail: 'no CI config found' };
+  const testCmd = detectTestCommand(root, files);
+  if (!ci) {
+    return { status: 'fail', detail: 'no CI config found' + (testCmd ? ` (runnable test entrypoint "${testCmd}" exists but is not wired to CI)` : '') };
+  }
+  const detail = testCmd ? `CI config present; test entrypoint: ${testCmd}` : 'CI config present; no local test entrypoint detected';
+  return { status: 'pass', evidence: [{ path: ci }], detail, test_command: testCmd };
 }
 
 function checkChangelog(root, files) {
