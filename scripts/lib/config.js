@@ -20,6 +20,7 @@ const DEFAULTS = Object.freeze({
   extractors: 'auto',
   layers: [],
   release_checks: { disable: [] },
+  tracking: { backend: 'markdown' },
   patch_branch: false,
   timeout_minutes: 30,
 });

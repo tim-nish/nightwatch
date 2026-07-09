@@ -1,5 +1,6 @@
 'use strict';
 const assert = require('assert');
+const fs = require('fs');
 const path = require('path');
 const { tmpRepo, write } = require('./helpers');
 const { loadConfig, parseStateBlock, deepMerge, DEFAULTS } = require('../scripts/lib/config');
@@ -25,6 +26,24 @@ module.exports = {
     assert.strictEqual(config.caps.reconcile, DEFAULTS.caps.reconcile, 'unspecified keys keep defaults');
     assert.strictEqual(config.timeout_minutes, 45, 'config.yaml overrides default');
     assert.strictEqual(phase, 'hardening');
+  },
+
+  'config: tracking.backend defaults to markdown, overridable via config.yaml': () => {
+    const r = tmpRepo();
+    assert.strictEqual(loadConfig(r).config.tracking.backend, 'markdown', 'shipped default');
+    write(r, '.nightwatch/config.yaml', 'tracking: {backend: sqlite}\n');
+    assert.strictEqual(loadConfig(r).config.tracking.backend, 'sqlite', 'config.yaml overrides');
+  },
+
+  'config: shipped config.yaml template parses and yields the documented defaults': () => {
+    const r = tmpRepo();
+    const tmpl = fs.readFileSync(path.join(__dirname, '..', 'templates', 'config.yaml'), 'utf8');
+    write(r, '.nightwatch/config.yaml', tmpl);
+    const { config, degraded } = loadConfig(r);
+    assert.deepStrictEqual(degraded, [], 'template parses cleanly');
+    assert.deepStrictEqual(config.tracking, DEFAULTS.tracking);
+    assert.deepStrictEqual(config.caps, DEFAULTS.caps);
+    assert.strictEqual(config.timeout_minutes, DEFAULTS.timeout_minutes);
   },
 
   'config: unparseable config.yaml is degraded, not fatal': () => {
