@@ -9,7 +9,8 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const { parseArgs, repoRoot, todayISO, nwDir, outDir, ensureDir, readFileSafe, readJSONSafe, exists } = require('./lib/util');
-const { readAllFindings, appendLedger, readLedger } = require('./lib/findings');
+const { readAllFindings } = require('./lib/findings');
+const { openTracker } = require('./lib/tracker');
 const { loadConfig } = require('./lib/config');
 
 const MEMBER_JOBS = ['repo-reconcile', 'arch-review', 'release-progress'];
@@ -49,9 +50,11 @@ function readReleaseHeader(root) {
 }
 
 // Demotion (spec principle 3): a member job with zero acted-on findings for the two most
-// recent runs in which it produced findings is flagged for retirement/redesign.
-function computeDemotions(root) {
-  const rows = readLedger(root);
+// recent runs in which it produced findings is flagged for retirement/redesign. Ledger reads go
+// through the tracking store — the sole sanctioned reader/writer of ledger.jsonl (§2.7); an
+// already-open store is threaded in by collect(), otherwise a read-only markdown store is opened.
+function computeDemotions(root, store) {
+  const rows = (store || openTracker(root)).readLedger();
   const flags = [];
   for (const job of MEMBER_JOBS) {
     const byDate = new Map();
@@ -72,6 +75,7 @@ function computeDemotions(root) {
 function collect(root, date, { force = false } = {}) {
   const { config } = loadConfig(root);
   const cap = (config.caps && config.caps.brief_total) || 25;
+  const store = openTracker(root, config);
 
   const docs = readAllFindings(root, date, MEMBER_JOBS);
   const runStatus = readJSONSafe(path.join(outDir(root), `run-status-${date}.json`)) || { jobs: [] };
@@ -128,7 +132,7 @@ function collect(root, date, { force = false } = {}) {
   const failLines = [];
   for (const j of runStatus.jobs || []) if (j.status && j.status !== 'ok') failLines.push(`- ${j.job}: **${j.status}**${j.note ? ' — ' + j.note : ''}`);
   for (const d of degradedNotices) failLines.push(`- ${d.job}: degraded — ${d.note}`);
-  const demotions = computeDemotions(root);
+  const demotions = computeDemotions(root, store);
   for (const job of demotions) failLines.push(`- ${job}: **demotion candidate** — zero acted-on findings two runs running; retire or redesign.`);
   if (failLines.length) L.push(...failLines); else L.push('- none');
   L.push('');
@@ -147,17 +151,18 @@ function collect(root, date, { force = false } = {}) {
   fs.writeFileSync(path.join(briefsDir, `${date}.md`), briefText);
   fs.writeFileSync(path.join(nwDir(root), 'MORNING.md'), briefText);
 
-  // ---- Ledger append (guard against double-append on same-date re-run) ----
-  const already = readLedger(root).some((r) => r.type === 'run' && r.job === 'collect-brief' && r.date === date);
+  // ---- Ledger append THROUGH THE TRACKING STORE (§2.7: the store is the sole sanctioned
+  // ledger writer). Guard against a double-append on a same-date re-run so re-runs don't inflate
+  // recurrence/demotion counts. Per-job lines carry date/job/tokens/findings count/degraded flags;
+  // finding rows go through recordFindings so they dedupe by id like every other ledger writer. ----
+  const already = store.readLedger().some((r) => r.type === 'run' && r.job === 'collect-brief' && r.date === date);
   if (!already || force) {
-    const rows = [];
     for (const doc of docs) {
       const js = (runStatus.jobs || []).find((j) => j.job === doc.job) || {};
-      rows.push({ type: 'run', date, job: doc.job, findings: (doc.findings || []).length, degraded: (doc.degraded || []).length, tokens: js.tokens || null });
-      for (const f of doc.findings || []) rows.push({ type: 'finding', date, job: doc.job, id: f.id, kind: f.kind, severity: f.severity, acted_on: null });
+      store.recordRun({ date, job: doc.job, findings: (doc.findings || []).length, degraded: (doc.degraded || []).length, tokens: js.tokens || null });
+      store.recordFindings(doc.findings || [], { date, job: doc.job });
     }
-    rows.push({ type: 'run', date, job: 'collect-brief', shown: included.size, total: all.length, cap });
-    appendLedger(root, rows);
+    store.recordRun({ date, job: 'collect-brief', shown: included.size, total: all.length, cap });
   }
 
   return { total: all.length, shown: included.size, overflow: overflow.length, demotions };

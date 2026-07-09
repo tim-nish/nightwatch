@@ -379,6 +379,11 @@ function openTracker(repo, config) {
         memLedger.push(row);
         return row;
       },
+      recordRun(row) {
+        const r = Object.assign({ type: 'run' }, row);
+        memLedger.push(r);
+        return r;
+      },
       readLedger() { return memLedger.slice(); },
       flush() { core.markDirty(); return { backend: 'memory' }; },
     });
@@ -427,6 +432,14 @@ function openTracker(repo, config) {
       const row = { type: 'feedback', id: fb.id, verdict: fb.verdict, date: fb.date || '' };
       appendLedgerRows(repo, [row]);
       return row;
+    },
+    // Append a per-run ledger line (the brief collector's per-job summary: date/job/tokens/
+    // findings count/degraded flags). A plain object stamped `type:'run'` and written through the
+    // store's sole ledger writer, so no consumer needs to touch ledger.jsonl directly (§2.7).
+    recordRun(row) {
+      const r = Object.assign({ type: 'run' }, row);
+      appendLedgerRows(repo, [r]);
+      return r;
     },
     readLedger() {
       const t = readFileSafe(ledgerPath(repo));
