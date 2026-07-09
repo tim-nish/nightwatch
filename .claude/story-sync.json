@@ -1,3 +1,8 @@
 {
-  "project": "Nightwatch"
+  "project": "Nightwatch",
+  "project_statuses": {
+    "todo": "Todo",
+    "in_review": "In Progress",
+    "done": "Done"
+  }
 }
