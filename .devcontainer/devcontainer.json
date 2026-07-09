@@ -1,25 +1,24 @@
 {
-  "name": "research-portfolio",
-  "build": {
-    "dockerfile": "Dockerfile"
-  },
+  "name": "project",
+  "image": "mcr.microsoft.com/devcontainers/base:bookworm",
   "features": {
     "ghcr.io/devcontainers/features/github-cli:1": {},
-    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
-  },
-  "forwardPorts": [5173],
-  "postCreateCommand": "bash .devcontainer/post-create.sh",
-  "mounts": [
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/dotfiles,target=/home/node/dotfiles,type=bind,consistency=cached"
-  ],
-  "customizations": {
-    "vscode": {
-      "extensions": [
-        "dbaeumer.vscode-eslint",
-        "esbenp.prettier-vscode",
-        "eamodio.gitlens"
-      ]
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts"
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.11"
     }
   },
-  "remoteUser": "node"
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "mounts": [
+    "source=${localEnv:HOME}/dotfiles,target=/home/vscode/dotfiles,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.claude/commands,target=/home/vscode/.claude/commands,type=bind,readonly",
+    "source=${localEnv:HOME}/.claude/tools,target=/home/vscode/.claude/tools,type=bind,readonly",
+    "source=${localEnv:HOME}/.claude/.credentials.json,target=/home/vscode/.claude/.credentials.json,type=bind,consistency=cached"
+  ],
+  "remoteEnv": {
+    "PATH": "/home/vscode/.claude/tools:${containerEnv:PATH}"
+  },
+  "remoteUser": "vscode"
 }
