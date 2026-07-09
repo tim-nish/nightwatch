@@ -169,6 +169,69 @@ module.exports = {
     assert.strictEqual(res.patch, null, 'dead pointer alone drafts no patch');
   },
 
+  // --- Story 3.5: opt-in patch branches via a temporary worktree (FR21) ---
+
+  'reconcile: patch_branch true → nightwatch/reconcile/<date> holds exactly the patch commit, built in a temp worktree (FR21)': () => {
+    const r = repoWithSurgicalDrift('derived');
+    write(r, '.nightwatch/config.yaml', 'patch_branch: true\n');
+    commit(r, 'enable patch_branch'); // start from a fully clean tree
+    const branch = 'nightwatch/reconcile/2000-01-01';
+
+    const res = reconcile(r, { date: '2000-01-01' });
+    assert.strictEqual(res.patchBranch, branch, 'reconcile reports the created branch');
+
+    // Branch exists and sits exactly ONE commit ahead of the base HEAD.
+    assert.ok(/(^|\n).*nightwatch\/reconcile\/2000-01-01/.test(git(r, ['branch', '--list', branch])), 'branch exists');
+    assert.strictEqual(git(r, ['rev-list', '--count', `HEAD..${branch}`]).trim(), '1', 'exactly one commit ahead of HEAD');
+    assert.strictEqual(git(r, ['rev-parse', `${branch}~1`]).trim(), git(r, ['rev-parse', 'HEAD']).trim(), 'the one commit sits directly on HEAD');
+
+    // That commit is the patch: --bogus gone from README on the branch, --tag kept.
+    const branchReadme = git(r, ['show', `${branch}:README.md`]);
+    assert.ok(!/--bogus/.test(branchReadme), 'drifted flag removed on the branch');
+    assert.ok(/--tag/.test(branchReadme), 'real flag documentation preserved on the branch');
+    assert.match(git(r, ['log', '-1', '--format=%s', branch]), /reconcile 2000-01-01/);
+
+    // The transient worktree was removed and pruned — only the main worktree remains.
+    assert.strictEqual(git(r, ['worktree', 'list']).trim().split('\n').length, 1, 'no leftover temporary worktree');
+  },
+
+  'reconcile: patch_branch true → the user checked-out branch and working tree are byte-identical after the run (FR21)': () => {
+    const r = repoWithSurgicalDrift('derived');
+    write(r, '.nightwatch/config.yaml', 'patch_branch: true\n');
+    commit(r, 'enable patch_branch');
+
+    // Snapshot the user's tree BEFORE the run.
+    const beforeHead = git(r, ['rev-parse', 'HEAD']).trim();
+    const beforeBranch = git(r, ['rev-parse', '--abbrev-ref', 'HEAD']).trim();
+    const beforeStatus = git(r, ['status', '--porcelain', '--untracked-files=no']);
+    const beforeReadme = fs.readFileSync(r + '/README.md', 'utf8');
+
+    const res = reconcile(r, { date: '2000-01-01' });
+    assert.ok(res.patchBranch, 'branch was created (precondition)');
+
+    // AFTER: identical HEAD, identical checked-out branch, no tracked-file changes, byte-identical file.
+    assert.strictEqual(git(r, ['rev-parse', 'HEAD']).trim(), beforeHead, 'HEAD unchanged');
+    assert.strictEqual(git(r, ['rev-parse', '--abbrev-ref', 'HEAD']).trim(), beforeBranch, 'checked-out branch never switched');
+    assert.strictEqual(git(r, ['status', '--porcelain', '--untracked-files=no']), beforeStatus, 'no tracked working-tree change');
+    assert.strictEqual(fs.readFileSync(r + '/README.md', 'utf8'), beforeReadme, 'README.md byte-identical (never edited in place)');
+
+    // Idempotent re-run: the branch still carries exactly the one patch commit.
+    const res2 = reconcile(r, { date: '2000-01-01' });
+    assert.strictEqual(res2.patchBranch, 'nightwatch/reconcile/2000-01-01');
+    assert.strictEqual(git(r, ['rev-list', '--count', 'HEAD..nightwatch/reconcile/2000-01-01']).trim(), '1', 're-run keeps exactly one commit');
+  },
+
+  'reconcile: patch_branch false (default) → only the patch file is produced, no branch created (FR21)': () => {
+    const r = repoWithSurgicalDrift('derived');
+    const res = reconcile(r, { date: '2000-01-01' });
+    // Patch still emitted under out/, exactly as before.
+    assert.ok(res.patchPath && fs.existsSync(res.patchPath), 'patch file written under .nightwatch/out');
+    assert.strictEqual(res.patchBranch, null, 'no branch reported by default');
+    // No nightwatch/* branch anywhere.
+    assert.strictEqual(git(r, ['branch', '--list', 'nightwatch/*']).trim(), '', 'no nightwatch/* branch created by default');
+    assert.strictEqual(git(r, ['worktree', 'list']).trim().split('\n').length, 1, 'no temporary worktree created');
+  },
+
   'reconcile: clean repo (authority declared, no drift) → 0 findings': () => {
     const r = tmpRepo();
     write(r, 'package.json', JSON.stringify({ name: 'clean', scripts: { test: 'node t.js' } }));
