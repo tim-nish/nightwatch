@@ -5,11 +5,18 @@
   "license": "MIT",
   "private": true,
   "type": "commonjs",
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
-    "test": "node test/run.js"
+    "test": "tsc --noEmit && node test/run.js",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "typescript": "^5.9.3"
   }
 }

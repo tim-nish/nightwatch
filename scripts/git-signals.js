@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 'use strict';
 // git-signals.js — universal signals from git history alone (no language awareness):
 // churn, co-change coupling across module boundaries, hotspots. Always available in any

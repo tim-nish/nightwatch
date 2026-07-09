@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 // Config precedence: shipped defaults <- .nightwatch/config.yaml <- STATE.md yaml block.
 // STATE.md owns declarations no tool can infer (authority, phase, release); config.yaml
@@ -6,6 +7,9 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const { readFileSafe } = require('./util');
+
+/** @typedef {import('./types').Config} Config */
+/** @typedef {import('./types').LoadedConfig} LoadedConfig */
 
 const DEFAULTS = Object.freeze({
   cadence: { 'repo-reconcile': 'nightly', 'arch-review': 'weekly', 'release-progress': 'nightly' },
@@ -45,7 +49,8 @@ function parseStateBlock(text) {
 
 /**
  * Load merged config for a repo root.
- * Returns { config, authority, phase, release, layers, degraded, sources }.
+ * @param {string} root
+ * @returns {LoadedConfig}
  */
 function loadConfig(root) {
   const degraded = [];

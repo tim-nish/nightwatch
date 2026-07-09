@@ -16,9 +16,58 @@ brief. **It never writes code, never pushes, and never publishes.**
 
 ## Install the plugin
 
-Add the plugin directory to Claude Code as a plugin (via your plugin marketplace/config, or a
-local path). Claude Code exposes `${CLAUDE_PLUGIN_ROOT}` at runtime; every script is invoked as
-`node ${CLAUDE_PLUGIN_ROOT}/scripts/<name>.js --repo .`, so there are no hardcoded paths.
+There are two ways to install Nightwatch. Every command prompt resolves its own script root the
+same way regardless of which one you use: it prefers `${CLAUDE_PLUGIN_ROOT}` (set by Claude Code
+when a command runs as part of a registered plugin), falls back to `${NIGHTWATCH_ROOT}` (set by
+you, below), and refuses to run — with a clear setup message — if neither is set. There are no
+hardcoded paths.
+
+### Option A — plugin registration
+
+No public marketplace is required for any of these. Claude Code sets `${CLAUDE_PLUGIN_ROOT}` at
+runtime for every command it runs, so no further setup is needed. Pick whichever fits:
+
+- **Direct, no installation:** `claude --plugin-dir ~/tools/nightwatch` loads the plugin for the
+  session; `/reload-plugins` picks up edits without restarting.
+- **Local marketplace:** `/plugin marketplace add <path>` where `<path>` is any directory or repo
+  containing `.claude-plugin/marketplace.json` — a folder on your machine qualifies.
+- **Private git marketplace:** `/plugin marketplace add <git-url>` (HTTPS or SSH, optionally
+  pinned with `#branch` or `#tag`). Nothing is published anywhere public.
+
+### Option B — local symlink (no plugin registration)
+
+Use this if you want the `/nightwatch`, `/repo-reconcile`, `/arch-review`, and
+`/release-progress` commands available as local Claude Code slash commands without registering
+Nightwatch as a plugin.
+
+1. Clone or copy this repository somewhere stable, e.g. `~/tools/nightwatch`, and install its
+   dependency:
+   ```
+   cd ~/tools/nightwatch
+   npm install --omit=dev
+   ```
+2. Symlink (or copy) its `commands/` markdown files into your Claude Code commands directory so
+   they're picked up as local slash commands:
+   ```
+   mkdir -p ~/.claude/commands
+   ln -s ~/tools/nightwatch/commands/nightwatch.md ~/.claude/commands/nightwatch.md
+   ln -s ~/tools/nightwatch/commands/repo-reconcile.md ~/.claude/commands/repo-reconcile.md
+   ln -s ~/tools/nightwatch/commands/arch-review.md ~/.claude/commands/arch-review.md
+   ln -s ~/tools/nightwatch/commands/release-progress.md ~/.claude/commands/release-progress.md
+   ```
+   (Use a project-local `.claude/commands/` instead of the `~/.claude/commands/` global directory
+   if you only want these commands available in one repo.)
+3. Set `NIGHTWATCH_ROOT` to the path from step 1, so the commands can find their scripts and
+   templates. Add this to your shell profile so it's always set:
+   ```
+   export NIGHTWATCH_ROOT="$HOME/tools/nightwatch"
+   ```
+4. Start a new Claude Code session (so it picks up both the symlinked commands and the
+   `NIGHTWATCH_ROOT` environment variable) and run `/nightwatch init` from inside the repo you
+   want reviewed.
+
+If neither `CLAUDE_PLUGIN_ROOT` nor `NIGHTWATCH_ROOT` is set when a command runs, it stops
+immediately with a setup message instead of guessing a path.
 
 Commands provided:
 

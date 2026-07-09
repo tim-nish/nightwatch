@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 'use strict';
 // arch-signals.js — deterministic architecture signals for /arch-review. Emits candidates
 // the judgment layer then argues both sides of; it never decides. Classes: speculation,

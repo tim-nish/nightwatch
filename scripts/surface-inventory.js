@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 'use strict';
 // surface-inventory.js — extract the repo's *claimable surface*: CLI subcommands & flags,
 // exported symbols, command/skill files, config keys read by code, file-tree shape.

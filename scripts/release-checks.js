@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 'use strict';
 // release-checks.js — deterministic release-hygiene checks valid for any public repo.
 // Feeds /release-progress as the "generic" source of done. Each check is pass|fail|skip
