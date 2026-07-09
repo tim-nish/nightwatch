@@ -60,4 +60,27 @@ module.exports = {
     assert.ok(inv.cli.subcommands.includes('sync'));
     assert.ok(inv.config_keys.includes('DB_URL'));
   },
+
+  'surface: broken package.json captured as blocking failure, universal surface still valid (FR36)': () => {
+    const r = tmpRepo();
+    write(r, 'package.json', '{ "name": "demo", broken json here ');
+    write(r, 'cli.js', 'export function go() {}');
+    write(r, 'README.md', '# demo\n');
+    const inv = inventory(r);
+    assert.strictEqual(inv.ecosystem, 'node');
+    assert.ok(inv.blocking.length >= 1, 'blocking failure captured for consumer to rank #1');
+    assert.ok(inv.blocking.some((b) => /package\.json/.test(b.reason)));
+    assert.ok(inv.blocking[0].evidence.some((e) => e.path === 'package.json'));
+    // The document is still valid: universal signals are present even when blocked.
+    assert.ok(inv.file_tree.total_files >= 1);
+    assert.strictEqual(inv.readme_path, 'README.md');
+  },
+
+  'surface: healthy repo reports no blocking failures': () => {
+    const r = tmpRepo();
+    write(r, 'package.json', JSON.stringify({ name: 'ok' }));
+    write(r, 'a.js', 'export const x = 1;');
+    const inv = inventory(r);
+    assert.deepStrictEqual(inv.blocking, []);
+  },
 };
