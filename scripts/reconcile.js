@@ -5,14 +5,16 @@
 // testable claims from README + docs, verifies each against the surface inventory, and assigns a
 // verdict: `holds` | `drifted` | `unverifiable-statically`. It never guesses — anything it can't
 // check statically is listed for a daytime run, not resolved. Direction-of-fix and patch emission
-// are the judgment layer's job (story 3.3); the adversarial refute pass is 3.4.
+// are the judgment layer's job (story 3.3). The adversarial verification pass (story 3.4) then
+// challenges each `drifted` verdict: survivors are stamped `verified:true` and only they reach the
+// brief; refuted verdicts are dropped. Its refutation is agent judgment; this file is the harness.
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { parseArgs, repoRoot, todayISO, exists, readFileSafe, walkFiles, writeJSON, outDir, globToRegExp, ensureDir, git, isGitRepo } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
 const { inventory } = require('./surface-inventory');
-const { makeFinding, SCHEMA_VERSION } = require('./lib/findings');
+const { makeFinding, recurrenceCounts, readLedger, appendLedger, SCHEMA_VERSION } = require('./lib/findings');
 
 /**
  * Find the declared authority entry whose `artifact` glob matches a claim's source path.
@@ -189,10 +191,61 @@ function buildPatchBranch(root, patchAbsPath, branch, message) {
 }
 
 /**
- * Extract-and-verify plus the judgment layer (authority → direction-of-fix + patch emission).
+ * Adversarial verification pass over the `drifted` verdicts (FR22) — the deterministic HARNESS
+ * that mirrors arch-review's refute pass. A second, *refuting* reviewer attempts to knock down
+ * each drift finding; the refutation itself is agent judgment (commands/repo-reconcile.md),
+ * supplied here as `refute`. This harness only DRIVES the pass and applies the survivor/drop rule:
+ * survivors are stamped `verified: true` and are the only drift that reaches the brief; refuted
+ * verdicts are dropped and recorded so the record shows they were considered and eliminated.
+ *
+ * The deterministic default (no agent) refutes nothing — reconcile's drift is detected mechanically
+ * (a flag/command literally absent from the surface), so absent a refutation it stands verified.
+ *
+ * @param {any[]} driftFindings drift findings (each `verified:false`) to challenge
+ * @param {((finding:any)=>(boolean|{refuted?:boolean, reason?:string}))} [refute]
+ *        return truthy / `{refuted:true}` to ELIMINATE a drifted verdict as a false positive.
+ * @returns {{ verified: any[], refuted: Array<{id:string, title:string, reason:string}> }}
+ */
+function adversarialPass(driftFindings, refute) {
+  const decide = typeof refute === 'function' ? refute : () => false;
+  const verified = [];
+  const refuted = [];
+  for (const f of driftFindings) {
+    const r = decide(f);
+    const isRefuted = r === true || (!!r && typeof r === 'object' && r.refuted === true);
+    if (isRefuted) {
+      const reason = (r && typeof r === 'object' && typeof r.reason === 'string' && r.reason) || 'refuted by adversarial pass';
+      refuted.push({ id: f.id, title: f.title, reason });
+    } else {
+      verified.push(Object.assign({}, f, { verified: true }));
+    }
+  }
+  return { verified, refuted };
+}
+
+/**
+ * Append this run's findings to the append-only ledger for recurrence counting (FR7), guarded
+ * against double-append on a same-date re-run so a re-run never inflates counts. Mirrors the
+ * ledger recording arch-review performs. `findings` are the ones that reached the brief.
+ */
+function recordLedger(root, date, findings, refutedCount) {
+  const already = readLedger(root).some((r) => r.type === 'run' && r.job === 'repo-reconcile' && r.date === date);
+  if (already) return;
+  /** @type {any[]} */
+  const rows = [{ type: 'run', date, job: 'repo-reconcile', findings: findings.length, refuted: refutedCount }];
+  for (const f of findings) rows.push({ type: 'finding', date, job: 'repo-reconcile', id: f.id, kind: f.kind, severity: f.severity });
+  appendLedger(root, rows);
+}
+
+/**
+ * Extract-and-verify plus the judgment layer (authority → direction-of-fix + patch emission) and
+ * the adversarial verification pass (FR22). The judgment layer assigns direction-of-fix and emits
+ * derived-doc patches (opt-in patch branch via a temporary worktree, FR21); the adversarial pass
+ * then challenges each `drifted` verdict so only survivors reach the brief. Findings that reach the
+ * brief are stamped `verified: true` and recorded in the ledger for recurrence (FR7).
  * @param {string} root
- * @param {{date?: string}} [opts]
- * @returns {{ degraded: string[], findings: any[], claims: any[], unverifiable: any[], stopped: boolean, patch: string|null, patchPath: string|null, patchBranch: string|null, human_decisions: string[] }}
+ * @param {{date?: string, refute?: ((finding:any)=>(boolean|{refuted?:boolean, reason?:string}))}} [opts]
+ * @returns {{ degraded: string[], findings: any[], claims: any[], unverifiable: any[], stopped: boolean, patch: string|null, patchPath: string|null, patchBranch: string|null, human_decisions: string[], refuted: Array<{id:string, title:string, reason:string}> }}
  */
 function reconcile(root, opts = {}) {
   const date = opts.date || todayISO();
@@ -204,11 +257,16 @@ function reconcile(root, opts = {}) {
   const unverifiable = [];
 
   // A broken build / unparsable surface outranks all drift: finding #1, stop deeper checks (FR20).
+  // A blocker is a mechanical fact, not a drifted verdict — it bypasses the adversarial pass and is
+  // stamped verified so the brief-wide "only verified findings enter the brief" invariant holds.
   if (inv.blocking && inv.blocking.length) {
     const b = inv.blocking[0];
-    findings.push(makeFinding('repo-reconcile', { kind: 'blocker', severity: 5, action: 'human-decision', verified: false,
-      title: b.reason, locus: 'surface:blocking', evidence: b.evidence || [], extra: undefined }));
-    return { degraded, findings, claims, unverifiable, stopped: true, patch: null, patchPath: null, patchBranch: null, human_decisions: findings.map((f) => f.id) };
+    const f = makeFinding('repo-reconcile', { kind: 'blocker', severity: 5, action: 'human-decision', verified: true,
+      title: b.reason, locus: 'surface:blocking', evidence: b.evidence || [], extra: undefined });
+    f.recurrence = recurrenceCounts(root).get(f.id) || 0;
+    findings.push(f);
+    recordLedger(root, date, findings, 0);
+    return { degraded, findings, claims, unverifiable, stopped: true, patch: null, patchPath: null, patchBranch: null, human_decisions: findings.map((x) => x.id), refuted: [] };
   }
 
   // No declared authority → detection-only mode: conflicts still reported, but the setup finding
@@ -245,7 +303,7 @@ function reconcile(root, opts = {}) {
   //   role: authoritative → a bug or unrecorded decision → `human-decision`, NEVER a patch
   //   undeclared artifact → `human-decision`, direction omitted (3.2 behavior, preserved)
   const patchFile = `.nightwatch/out/reconcile-${date}.patch`;
-  const patchDeletes = new Map(); // POSIX path -> Set of 1-based line numbers to delete
+  const pendingPatch = new Map(); // finding.id -> { path, line } — a delete to draft IF it survives
   const drift = [];
   for (const c of claims) {
     if (c.verdict === 'drifted') {
@@ -253,29 +311,48 @@ function reconcile(root, opts = {}) {
       const auth = authorityFor(authority, c.source.path);
       let action = 'human-decision';
       let extra;
+      let patchLoc = null;
       if (auth && auth.role === 'derived') {
         action = 'patch-available';
         // The command claim's evidence points at the code-fence line; the offending command
         // itself is the next line. Flag claims already point at the exact documented line.
         const delLine = c.kind === 'command' ? c.source.line + 1 : c.source.line;
-        if (!patchDeletes.has(c.source.path)) patchDeletes.set(c.source.path, new Set());
-        patchDeletes.get(c.source.path).add(delLine);
+        patchLoc = { path: c.source.path, line: delLine };
         extra = { direction: c.source.path, patch_file: patchFile };
       }
-      drift.push(makeFinding('repo-reconcile', { kind: 'drift', severity, action, verified: false,
-        title: c.title, locus: c.locus, evidence: [c.source], extra }));
+      const f = makeFinding('repo-reconcile', { kind: 'drift', severity, action, verified: false,
+        title: c.title, locus: c.locus, evidence: [c.source], extra });
+      if (patchLoc) pendingPatch.set(f.id, patchLoc);
+      drift.push(f);
     } else if (c.verdict === 'unverifiable-statically') {
       unverifiable.push({ kind: c.kind, text: c.text, source: c.source, reason: 'needs a live run / deeper analysis' });
     }
   }
   drift.sort((a, b) => b.severity - a.severity || a.id.localeCompare(b.id));
 
+  // Adversarial verification pass (FR22): a refuting reviewer challenges each drifted verdict.
+  // Only survivors — stamped verified:true — reach the brief; refuted verdicts are dropped and
+  // recorded. The refutation is agent judgment (opts.refute); the deterministic default refutes
+  // nothing, so mechanically-detected drift stands verified.
+  const { verified: verifiedDrift, refuted } = adversarialPass(drift, opts.refute);
+
+  // Only SURVIVING derived-artifact drift is patched — a refuted (dropped) verdict is never patched.
+  const patchDeletes = new Map(); // POSIX path -> Set of 1-based line numbers to delete
+  for (const f of verifiedDrift) {
+    const loc = pendingPatch.get(f.id);
+    if (!loc) continue;
+    if (!patchDeletes.has(loc.path)) patchDeletes.set(loc.path, new Set());
+    patchDeletes.get(loc.path).add(loc.line);
+  }
+
   // Setup findings rank ahead of drift. Detection-only keeps the "declare authority" finding
   // as #1 (3.2). With authority declared, an authority glob that matches no repo file is a dead
   // pointer the maintainer must fix (FR36).
+  // Setup findings are mechanical facts, not drifted verdicts — they skip the adversarial pass and
+  // are stamped verified so everything in the brief carries verified:true.
   const setupFindings = [];
   if (detectionOnly) {
-    setupFindings.push(makeFinding('repo-reconcile', { kind: 'setup', severity: 4, action: 'daytime-task', verified: false,
+    setupFindings.push(makeFinding('repo-reconcile', { kind: 'setup', severity: 4, action: 'daytime-task', verified: true,
       title: 'declare authority in STATE.md; run `/nightwatch init`', locus: 'authority:undeclared', evidence: [], extra: undefined }));
     degraded.push('authority undeclared — detection-only mode; findings omit direction-of-fix');
   } else {
@@ -286,7 +363,7 @@ function reconcile(root, opts = {}) {
       if (typeof glob !== 'string') continue;
       const re = globToRegExp(glob);
       if (!allFiles.some((f) => re.test(f))) {
-        setupFindings.push(makeFinding('repo-reconcile', { kind: 'setup', severity: 3, action: 'daytime-task', verified: false,
+        setupFindings.push(makeFinding('repo-reconcile', { kind: 'setup', severity: 3, action: 'daytime-task', verified: true,
           title: `authority pointer "${key}" targets "${glob}" but no file in the repo matches it`,
           locus: `authority:dead:${key}`, evidence: [], extra: undefined }));
         degraded.push(`authority pointer "${key}" (${glob}) matches no file — dead pointer`);
@@ -318,13 +395,21 @@ function reconcile(root, opts = {}) {
     }
   }
 
-  // Cap the brief section by user-facing severity (default 10), setup ahead of drift.
+  // Cap the brief section by user-facing severity (default 10), setup ahead of verified drift.
   const cap = (config.caps && Number.isFinite(config.caps.reconcile)) ? config.caps.reconcile : 10;
-  const ordered = [...setupFindings, ...drift].slice(0, cap);
+  const ordered = [...setupFindings, ...verifiedDrift].slice(0, cap);
+
+  // Recurrence via the append-only ledger (FR7): a survivor that recurs on an unchanged repo keeps
+  // its (date-independent) id and is counted here, not re-reported as new. Read counts BEFORE this
+  // run's rows are appended, then record the brief findings.
+  const recur = recurrenceCounts(root);
+  for (const f of ordered) f.recurrence = recur.get(f.id) || 0;
+  recordLedger(root, date, ordered, refuted.length);
+
   findings.push(...ordered);
   const human_decisions = ordered.filter((f) => f.action === 'human-decision').map((f) => f.id);
 
-  return { degraded, findings, claims, unverifiable, stopped: false, patch: patch || null, patchPath, patchBranch, human_decisions };
+  return { degraded, findings, claims, unverifiable, stopped: false, patch: patch || null, patchPath, patchBranch, human_decisions, refuted };
 }
 
 function main() {
@@ -334,7 +419,7 @@ function main() {
   const res = reconcile(root, { date });
   const patch_path = res.patchPath ? `.nightwatch/out/reconcile-${date}.patch` : null;
   const doc = { schema: SCHEMA_VERSION, job: 'repo-reconcile', date, degraded: res.degraded, findings: res.findings,
-    human_decisions: res.human_decisions, patch_path, patch_branch: res.patchBranch, claims: res.claims, unverifiable: res.unverifiable, stopped: res.stopped };
+    human_decisions: res.human_decisions, patch_path, patch_branch: res.patchBranch, claims: res.claims, unverifiable: res.unverifiable, refuted: res.refuted, stopped: res.stopped };
   writeJSON(path.join(outDir(root), `repo-reconcile-${date}.json`), doc);
   const drifted = res.findings.filter((f) => f.kind === 'drift').length;
   if (res.findings.length === 0) process.stdout.write('0 findings\n');
@@ -342,4 +427,4 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { reconcile };
+module.exports = { reconcile, adversarialPass };

@@ -3,6 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const { tmpRepo, write, git, gitInit, commit } = require('./helpers');
 const { reconcile } = require('../scripts/reconcile');
+const { recurrenceCounts } = require('../scripts/lib/findings');
 
 function byLocusKind(res) { return res; }
 
@@ -230,6 +231,58 @@ module.exports = {
     // No nightwatch/* branch anywhere.
     assert.strictEqual(git(r, ['branch', '--list', 'nightwatch/*']).trim(), '', 'no nightwatch/* branch created by default');
     assert.strictEqual(git(r, ['worktree', 'list']).trim().split('\n').length, 1, 'no temporary worktree created');
+  },
+
+  // ---- Story 3.4: adversarial verification pass (FR22) ----
+
+  'reconcile: adversarial pass — a drifted verdict survives (verified) while a refutable one is eliminated (FR22)': () => {
+    const r = repoWithDrift({ state: AUTHORITY_STATE }); // README drifts on `--bogus` flag AND `npm deploy`
+    // The refuting reviewer (stand-in for the second subagent): eliminate the `npm deploy` command
+    // verdict as a false positive, but fail to refute the `--bogus` flag verdict.
+    const refute = (f) => (/npm deploy/.test(f.title) ? { refuted: true, reason: 'deploy is a valid alias verified by a code read' } : false);
+    const res = reconcile(r, { date: '2000-01-01', refute });
+
+    // The known-good drift survives, stamped verified, and reaches the brief.
+    const bogus = res.findings.find((f) => f.kind === 'drift' && /--bogus/.test(f.title));
+    assert.ok(bogus, 'known-good drifted verdict survives the adversarial pass');
+    assert.strictEqual(bogus.verified, true, 'survivor is stamped verified:true');
+
+    // The refuted verdict is dropped from the brief entirely and recorded as refuted.
+    assert.ok(!res.findings.some((f) => /npm deploy/.test(f.title)), 'refuted verdict dropped from the brief');
+    assert.ok(res.refuted.some((x) => /npm deploy/.test(x.title) && /deploy is a valid alias/.test(x.reason)),
+      'refuted verdict recorded with its refutation reason');
+
+    // Brief-wide invariant: only verified findings enter the brief.
+    assert.ok(res.findings.length > 0 && res.findings.every((f) => f.verified === true), 'every brief finding is verified');
+    // The dropped verdict is never patched (its README line stays in the drafted patch's scope out).
+    if (res.patch) assert.ok(!/deploy/.test(res.patch), 'a refuted verdict is never patched');
+  },
+
+  'reconcile: default (no refuter) eliminates nothing — every drift verdict survives verified (FR22)': () => {
+    const res = reconcile(repoWithDrift({ state: AUTHORITY_STATE }), { date: '2000-01-01' });
+    const drift = res.findings.filter((f) => f.kind === 'drift');
+    assert.ok(drift.length >= 2, 'both drifted verdicts detected');
+    assert.ok(drift.every((f) => f.verified === true), 'the deterministic default refutes nothing → all survive verified');
+    assert.deepStrictEqual(res.refuted, [], 'nothing recorded as refuted');
+  },
+
+  'reconcile: survivor id is stable across nights and recurrence is counted, not re-reported as new (FR7)': () => {
+    const r = repoWithDrift({ state: AUTHORITY_STATE });
+    const night1 = reconcile(r, { date: '2000-01-01' });
+    const night2 = reconcile(r, { date: '2000-01-02' });
+    const driftIds = (res) => res.findings.filter((f) => f.kind === 'drift').map((f) => f.id).sort();
+
+    // Same repo, same verdicts → byte-identical ids both nights (id is a content hash of kind|locus).
+    assert.deepStrictEqual(driftIds(night1), driftIds(night2), 'a surviving finding has an identical id both nights');
+
+    // Recurrence via the ledger: night 1 the finding is new (0); night 2 it recurs (>=1), not re-reported.
+    const bogus1 = night1.findings.find((f) => f.kind === 'drift' && /--bogus/.test(f.title));
+    const bogus2 = night2.findings.find((f) => f.kind === 'drift' && /--bogus/.test(f.title));
+    assert.strictEqual(bogus1.id, bogus2.id, 'same locus → same id across runs');
+    assert.strictEqual(bogus1.recurrence, 0, 'first night the finding is new');
+    assert.ok(bogus2.recurrence >= 1, 'second night the recurrence is counted, not re-reported as new');
+    // The append-only ledger records both appearances under the one stable id.
+    assert.ok(recurrenceCounts(r).get(bogus2.id) >= 2, 'ledger counts both nights under the same id');
   },
 
   'reconcile: clean repo (authority declared, no drift) → 0 findings': () => {
