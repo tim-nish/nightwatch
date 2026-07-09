@@ -1,0 +1,346 @@
+// @ts-check
+'use strict';
+// Tracking store — the single sanctioned interface to RELEASE.md and .nightwatch/ledger.jsonl
+// (spec §5, FR16/FR17). Jobs are written against the backend-neutral TrackerStore returned by
+// openTracker(); a future backend migration is a mechanical replay against this same interface,
+// not a rewrite. Two backends ship: `markdown` (persists to RELEASE.md, atomic) and an
+// in-memory `memory` backend used by the conformance suite. Both share one core state machine
+// so they pass the same behavioral tests by construction.
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { nwDir, ensureDir, readFileSafe } = require('./util');
+const { dedupeFindings } = require('./findings');
+
+/** @typedef {import('./types').EvidenceItem} EvidenceItem */
+/** @typedef {import('./types').Finding} Finding */
+
+const KNOWN_BACKENDS = ['markdown', 'memory'];
+
+// Store-level item sections and the RELEASE.md headings they render into. Completed items
+// move to the shared Done section regardless of their origin section (never deleted).
+const SECTIONS = ['implementation', 'documentation', 'blockers', 'decisions', 'nice', 'next'];
+const HEADING_BY_SECTION = {
+  implementation: 'Remaining — implementation',
+  documentation: 'Remaining — documentation',
+  blockers: 'Release blockers',
+  decisions: 'Human decisions needed',
+  nice: 'Nice to have',
+  next: 'Next actions (top 3)',
+};
+const STATUS_CAP = 10;
+
+const TEMPLATE_PATH = path.join(__dirname, '..', '..', 'templates', 'RELEASE.md');
+
+/** Stable, backend-independent item id from a caller locus/key (mirrors findings ids). */
+function itemId(key) {
+  return 'IT-' + crypto.createHash('sha1').update(String(key)).digest('hex').slice(0, 6);
+}
+
+function evToString(ev) {
+  if (!Array.isArray(ev) || !ev.length) return '';
+  return ev.map((e) => (e && e.line != null ? `${e.path}:${e.line}` : e && e.path)).filter(Boolean).join(', ');
+}
+
+// ---- RELEASE.md parse / serialize (markdown backend only) -----------------------------
+
+/**
+ * Split a RELEASE.md document into an ordered section model. `head` is everything before the
+ * first `##` heading (frontmatter + title). Item lines carry a trailing `<!-- nw:ID -->` marker
+ * so a human can freely edit the visible text while identity survives. The raw body of every
+ * section is retained so an unmodified round-trip is byte-identical.
+ */
+function parseRelease(text) {
+  const lines = text.split('\n');
+  const headingIdx = [];
+  for (let i = 0; i < lines.length; i++) if (/^## /.test(lines[i])) headingIdx.push(i);
+  const head = headingIdx.length ? lines.slice(0, headingIdx[0]).join('\n') + '\n' : text;
+  const sections = [];
+  for (let s = 0; s < headingIdx.length; s++) {
+    const start = headingIdx[s];
+    const end = s + 1 < headingIdx.length ? headingIdx[s + 1] : lines.length;
+    const heading = lines[start];
+    const bodyRaw = lines.slice(start + 1, end).join('\n');
+    sections.push({ heading, bodyRaw });
+  }
+  return { head, sections, raw: text };
+}
+
+const ITEM_RE = /^- \[([ xX])\] (.*?)(?:\s*<!-- nw:(IT-[0-9a-f]{6}) -->)?\s*$/;
+
+/** Parse item checklist lines out of a section body; non-item lines are section preamble. */
+function parseItems(bodyRaw) {
+  const items = [];
+  const preamble = [];
+  let seenItem = false;
+  for (const line of bodyRaw.split('\n')) {
+    const m = line.match(ITEM_RE);
+    if (m && m[3]) {
+      seenItem = true;
+      items.push({ id: m[3], title: m[2].trim(), done: m[1].toLowerCase() === 'x', raw: line });
+    } else if (!seenItem) {
+      preamble.push(line);
+    }
+  }
+  // Trim a single trailing blank preamble line so re-render spacing is predictable.
+  return { preamble, items };
+}
+
+function renderItem(it) {
+  const box = it.status === 'done' ? 'x' : ' ';
+  const ev = evToString(it.evidence);
+  const body = it.title + (ev ? ` — evidence: ${ev}` : '');
+  return `- [${box}] ${body} <!-- nw:${it.id} -->`;
+}
+
+// ---- Core state machine (shared by both backends) -------------------------------------
+
+function makeCore(seed) {
+  const items = new Map(); // id -> {id, title, section, status:'open'|'done', evidence, raw?}
+  const order = [];
+  let status = []; // [{date, text}] latest first
+  let dirty = false;
+
+  if (seed) {
+    for (const it of seed.items || []) { items.set(it.id, it); order.push(it.id); }
+    status = (seed.status || []).slice(0, STATUS_CAP);
+  }
+
+  function list(filter) {
+    let out = order.map((id) => items.get(id)).filter(Boolean);
+    if (filter && filter.status) out = out.filter((it) => it.status === filter.status);
+    if (filter && filter.section) out = out.filter((it) => it.section === filter.section);
+    return out.map((it) => ({ id: it.id, title: it.title, section: it.section, status: it.status, evidence: it.evidence || [] }));
+  }
+
+  return {
+    get dirty() { return dirty; },
+    get statusLines() { return status; },
+    items,
+    order,
+    markDirty() { dirty = true; },
+
+    listItems(filter) { return list(filter); },
+    query(filter) { return list(filter); },
+
+    upsertItem(input) {
+      if (!input || !input.title) throw new Error('upsertItem requires a title');
+      if (input.section && !SECTIONS.includes(input.section)) throw new Error(`unknown section: ${input.section}`);
+      const id = input.id || itemId(input.key != null ? input.key : `${input.section || 'implementation'}|${input.title}`);
+      const evidence = Array.isArray(input.evidence) ? input.evidence : [];
+      const existing = items.get(id);
+      if (existing) {
+        existing.title = input.title;
+        if (input.section) existing.section = input.section;
+        existing.evidence = evidence;
+        existing.raw = null; // changed → re-render
+      } else {
+        items.set(id, { id, title: input.title, section: input.section || 'implementation', status: 'open', evidence, raw: null });
+        order.push(id);
+      }
+      dirty = true;
+      return items.get(id);
+    },
+
+    completeItem(id) {
+      const it = items.get(id);
+      if (!it) return null;
+      it.status = 'done';
+      it.raw = null;
+      dirty = true;
+      return it;
+    },
+
+    appendStatus(text, date) {
+      status.unshift({ date: date || '', text: String(text) });
+      if (status.length > STATUS_CAP) status = status.slice(0, STATUS_CAP);
+      dirty = true;
+      return status[0];
+    },
+    _setStatus(s) { status = s; },
+  };
+}
+
+// ---- Ledger (append-only; tracker is the sole writer, FR17) ----------------------------
+
+function ledgerPath(root) { return path.join(nwDir(root), 'ledger.jsonl'); }
+
+function appendLedgerRows(root, rows) {
+  if (!rows || !rows.length) return;
+  ensureDir(nwDir(root));
+  fs.appendFileSync(ledgerPath(root), rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+}
+
+// ---- Backends --------------------------------------------------------------------------
+
+/** Atomic file write: temp file in the same dir, then rename. */
+function writeAtomic(file, text) {
+  ensureDir(path.dirname(file));
+  const tmp = file + '.tmp-' + process.pid;
+  fs.writeFileSync(tmp, text);
+  fs.renameSync(tmp, file);
+}
+
+function loadReleaseText(root) {
+  const existing = readFileSafe(path.join(root, 'RELEASE.md'));
+  if (existing != null) return existing;
+  const tmpl = readFileSafe(TEMPLATE_PATH);
+  return tmpl != null ? tmpl : '';
+}
+
+/** Seed core items from a parsed RELEASE.md model (parsed items become open/done in-memory). */
+function seedFromRelease(model) {
+  const items = [];
+  const status = [];
+  for (const sec of model.sections) {
+    if (/^## Status update/.test(sec.heading)) {
+      for (const line of sec.bodyRaw.split('\n')) {
+        const m = line.match(/^- (\d{4}-\d{2}-\d{2}) — (.*)$/);
+        if (m) status.push({ date: m[1], text: m[2] });
+      }
+      continue;
+    }
+    const isDone = /^## Done/.test(sec.heading);
+    let section = null;
+    for (const s of SECTIONS) if (sec.heading === `## ${HEADING_BY_SECTION[s]}`) section = s;
+    if (!isDone && !section) continue;
+    const { items: parsed } = parseItems(sec.bodyRaw);
+    for (const p of parsed) {
+      items.push({ id: p.id, title: p.title, section: section || 'implementation', status: p.done || isDone ? 'done' : 'open', evidence: [], raw: p.raw });
+    }
+  }
+  return { items, status };
+}
+
+function renderRelease(model, core) {
+  // Untouched document → return original bytes (guarantees byte-identical round-trip, FR16).
+  if (!core.dirty) return model.raw;
+
+  const doneItems = core.order.map((id) => core.items.get(id)).filter((it) => it && it.status === 'done');
+  const openBySection = {};
+  for (const s of SECTIONS) openBySection[s] = [];
+  for (const id of core.order) {
+    const it = core.items.get(id);
+    if (it && it.status === 'open') (openBySection[it.section] || openBySection.implementation).push(it);
+  }
+
+  const renderLine = (it) => (it.raw != null ? it.raw : renderItem(it));
+
+  const out = [];
+  out.push(model.head.replace(/\n$/, ''));
+  for (const sec of model.sections) {
+    // Notes is human-owned — always byte-preserved.
+    if (/^## Notes/.test(sec.heading)) { out.push(sec.heading); out.push(sec.bodyRaw.replace(/\n$/, '')); continue; }
+
+    if (/^## Status update/.test(sec.heading)) {
+      out.push(sec.heading);
+      const lines = core.statusLines.map((s) => `- ${s.date} — ${s.text}`);
+      out.push(lines.join('\n'));
+      out.push('');
+      continue;
+    }
+
+    const isDone = /^## Done/.test(sec.heading);
+    let section = null;
+    for (const s of SECTIONS) if (sec.heading === `## ${HEADING_BY_SECTION[s]}`) section = s;
+
+    if (!isDone && !section) { out.push(sec.heading); out.push(sec.bodyRaw.replace(/\n$/, '')); continue; }
+
+    const { preamble } = parseItems(sec.bodyRaw);
+    const listItems = isDone ? doneItems : openBySection[section];
+    const chunk = [sec.heading];
+    const pre = preamble.join('\n').replace(/\s+$/, '');
+    if (pre) chunk.push(pre);
+    for (const it of listItems) chunk.push(renderLine(it));
+    chunk.push('');
+    out.push(chunk.join('\n'));
+  }
+  let text = out.join('\n');
+  if (!text.endsWith('\n')) text += '\n';
+  return text;
+}
+
+/**
+ * Open a tracking store for a repo.
+ * @param {string} repo Repo root.
+ * @param {{ tracking?: { backend?: string } }} [config]
+ * @returns {object} TrackerStore
+ */
+function openTracker(repo, config) {
+  const requested = (config && config.tracking && config.tracking.backend) || 'markdown';
+  const setupFindings = [];
+  let backend = requested;
+  if (!KNOWN_BACKENDS.includes(backend)) {
+    // Unknown/unavailable backend: surface a setup finding and fall back to markdown with no
+    // partial writes and no migration (FR16).
+    setupFindings.push({
+      kind: 'setup', severity: 3, action: 'daytime-task', verified: false,
+      title: `Unknown tracking backend "${requested}"; falling back to markdown`,
+      evidence: [{ path: '.nightwatch/config.yaml' }],
+      id: itemId(`setup|tracking-backend|${requested}`),
+    });
+    backend = 'markdown';
+  }
+
+  if (backend === 'memory') {
+    const core = makeCore(null);
+    const memLedger = [];
+    return Object.assign(core, {
+      backend: 'memory',
+      setupFindings,
+      recordFindings(findings, meta) {
+        const { findings: deduped } = dedupeFindings(findings || []);
+        for (const f of deduped) memLedger.push(toLedgerRow(f, meta));
+        return deduped;
+      },
+      recordFeedback(fb) {
+        const row = { type: 'feedback', id: fb.id, verdict: fb.verdict, date: fb.date || '' };
+        memLedger.push(row);
+        return row;
+      },
+      readLedger() { return memLedger.slice(); },
+      flush() { core.markDirty(); return { backend: 'memory' }; },
+    });
+  }
+
+  // markdown backend
+  const releaseText = loadReleaseText(repo);
+  const model = parseRelease(releaseText);
+  const core = makeCore(seedFromRelease(model));
+  return Object.assign(core, {
+    backend: 'markdown',
+    setupFindings,
+    recordFindings(findings, meta) {
+      const { findings: deduped } = dedupeFindings(findings || []);
+      appendLedgerRows(repo, deduped.map((f) => toLedgerRow(f, meta)));
+      return deduped;
+    },
+    recordFeedback(fb) {
+      const row = { type: 'feedback', id: fb.id, verdict: fb.verdict, date: fb.date || '' };
+      appendLedgerRows(repo, [row]);
+      return row;
+    },
+    readLedger() {
+      const t = readFileSafe(ledgerPath(repo));
+      if (!t) return [];
+      return t.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+    },
+    flush() {
+      const text = renderRelease(model, core);
+      writeAtomic(path.join(repo, 'RELEASE.md'), text);
+      return { backend: 'markdown', bytes: text.length };
+    },
+  });
+}
+
+function toLedgerRow(f, meta) {
+  return {
+    type: 'finding', id: f.id, kind: f.kind, severity: f.severity,
+    date: (meta && meta.date) || '', job: (meta && meta.job) || undefined,
+  };
+}
+
+module.exports = {
+  openTracker, itemId, parseRelease, renderRelease, seedFromRelease,
+  KNOWN_BACKENDS, SECTIONS, HEADING_BY_SECTION, ledgerPath,
+};
