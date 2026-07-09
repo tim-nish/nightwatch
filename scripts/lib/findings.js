@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 // Findings schema + stable ids + ledger. This is the inter-command interface (spec §2.5):
 // every job writes .nightwatch/out/<job>-<date>.json to one schema; release-progress and
@@ -7,6 +8,11 @@ const path = require('path');
 const crypto = require('crypto');
 const fs = require('fs');
 const { outDir, nwDir, ensureDir, readJSONSafe, writeJSON, readFileSafe } = require('./util');
+
+/** @typedef {import('./types').Job} Job */
+/** @typedef {import('./types').Finding} Finding */
+/** @typedef {import('./types').FindingsDoc} FindingsDoc */
+/** @typedef {import('./types').LedgerRow} LedgerRow */
 
 const JOB_PREFIX = {
   'repo-reconcile': 'RC',
@@ -56,6 +62,7 @@ function writeFindings(root, job, date, degraded, findings) {
   return doc;
 }
 
+/** @returns {FindingsDoc | null} */
 function readFindings(root, job, date) { return readJSONSafe(findingsPath(root, job, date)); }
 
 /** Read all job findings docs present for a date. Missing jobs simply absent. */

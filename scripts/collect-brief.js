@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 'use strict';
 // collect-brief.js — deterministic brief assembly (truncation must be mechanical; ranking
 // *within* jobs is the jobs' judgment). Reads every out/<job>-<date>.json, enforces the

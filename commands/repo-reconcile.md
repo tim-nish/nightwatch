@@ -10,11 +10,22 @@ report disagreements, and the *direction* of fix **only** when the repo has decl
 precedence in `STATE.md`. You **never infer authority**, and you **never edit any repo file in
 place** — proposals are patch files or human-decision findings.
 
+## Script root resolution
+
+Every script and template path below is relative to the Nightwatch root. Resolve it once,
+before running anything, and call the result `${NW_ROOT}` for the rest of this file:
+
+1. If `${CLAUDE_PLUGIN_ROOT}` is set, use it (official plugin install).
+2. Else if `${NIGHTWATCH_ROOT}` is set, use it (local/symlink install — see `docs/install.md`).
+3. Else stop immediately and report: "Nightwatch root not found — set `NIGHTWATCH_ROOT` to the
+   plugin directory (see docs/install.md) or install Nightwatch as a Claude Code plugin." Do
+   not guess a path.
+
 ## Deterministic layer
 
 Run the surface inventory (the repo's *claimable surface*):
 ```
-node ${CLAUDE_PLUGIN_ROOT}/scripts/surface-inventory.js --repo .
+node ${NW_ROOT}/scripts/surface-inventory.js --repo .
 ```
 Read `.nightwatch/out/surface-<date>.json`: CLI subcommands/flags, exported symbols,
 command/skill files, config keys, file-tree shape, README code blocks and flag tokens. If the
@@ -46,7 +57,7 @@ a broken build outranks all drift.
 ## Output
 
 Write `.nightwatch/out/repo-reconcile-<date>.json` using the schema in
-`${CLAUDE_PLUGIN_ROOT}/scripts/lib/findings.js` (stable ids via `makeId(job, kind, locus)` where
+`${NW_ROOT}/scripts/lib/findings.js` (stable ids via `makeId(job, kind, locus)` where
 `locus` names the claim independent of wording, e.g. `"README.md::flag:--tag"`). Cap the brief
 section at `caps.reconcile` (default 10), ranked by user-facing severity — a documented-but-
 nonexistent command outranks a stale internal comment. Include an explicit "Human decisions

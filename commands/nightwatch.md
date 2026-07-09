@@ -9,6 +9,17 @@ The single scheduled entrypoint for unattended overnight review. You run the mem
 are due, in dependency order, then assemble one capped, ranked morning brief. You survive any
 member job failing. With the argument `init`, you instead run interactive daytime setup.
 
+## Script root resolution
+
+Every script and template path below is relative to the Nightwatch root. Resolve it once,
+before running anything, and call the result `${NW_ROOT}` for the rest of this file:
+
+1. If `${CLAUDE_PLUGIN_ROOT}` is set, use it (official plugin install).
+2. Else if `${NIGHTWATCH_ROOT}` is set, use it (local/symlink install — see `docs/install.md`).
+3. Else stop immediately and report: "Nightwatch root not found — set `NIGHTWATCH_ROOT` to the
+   plugin directory (see docs/install.md) or install Nightwatch as a Claude Code plugin." Do
+   not guess a path.
+
 **These safety rules bind every member job and you enforce them by contract:**
 
 - Never implement features, never refactor, never modify source code.
@@ -27,7 +38,7 @@ Run this when the user types `/nightwatch init`.
 1. Verify this is a git checkout. Detect whether `STATE.md` and `.nightwatch/config.yaml` exist.
 2. Interview the human (you may ask questions here): authority per area, phase, release target
    and definition of done, optional layering rules.
-3. Write `STATE.md` from `${CLAUDE_PLUGIN_ROOT}/templates/STATE.md` and, if the user wants
+3. Write `STATE.md` from `${NW_ROOT}/templates/STATE.md` and, if the user wants
    operational overrides, `.nightwatch/config.yaml` from the template. Add `.nightwatch/out/` to
    the repo's `.gitignore`.
 4. Run each job once in dry-run and show the first brief (see the overnight flow below with
@@ -62,7 +73,7 @@ Overnight mode never creates or edits `STATE.md` or `config.yaml`.
 
 4. **Assemble the brief** (deterministic — truncation must be mechanical):
    ```
-   node ${CLAUDE_PLUGIN_ROOT}/scripts/collect-brief.js --repo .
+   node ${NW_ROOT}/scripts/collect-brief.js --repo .
    ```
    This writes `.nightwatch/briefs/<date>.md`, overwrites `.nightwatch/MORNING.md`, appends
    per-job ledger lines, and computes the demotion rule. Fixed section order and the global cap

@@ -1,10 +1,15 @@
+// @ts-check
 'use strict';
 // Shared helpers for Nightwatch scripts. No third-party deps here (js-yaml lives in config.js).
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-/** Parse `--key value` / `--flag` style argv (after `node script.js`). */
+/**
+ * Parse `--key value` / `--flag` style argv (after `node script.js`).
+ * @param {string[]} argv
+ * @returns {import('./types').Args}
+ */
 function parseArgs(argv) {
   const out = { _: [] };
   for (let i = 0; i < argv.length; i++) {
