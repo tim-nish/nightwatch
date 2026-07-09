@@ -38,6 +38,12 @@ function nwIdOf(doc, needle) {
   return m ? m[1] : null;
 }
 
+/** Write a foreign job's findings doc where release-progress reads it (`.nightwatch/out/…`). */
+function writeForeign(root, job, date, findings) {
+  const doc = { schema: 1, job, date, degraded: [], findings };
+  write(root, `.nightwatch/out/${job}-${date}.json`, JSON.stringify(doc, null, 2) + '\n');
+}
+
 module.exports = {
   // AC1 — fresh repo: valid RELEASE.md instantiated via the store, generic items only, notice set.
   'release-progress: fresh repo instantiates RELEASE.md with generic items + notice': () => {
@@ -146,6 +152,111 @@ module.exports = {
     const bFixed = b.replace('updated: 2026-03-02', 'updated: 2026-03-01').replace('- 2026-03-02 — no change\n', '');
     assert.strictEqual(bFixed, a, 'only updated: and one no-change status line changed');
     assert.ok(res.brief.length <= 12, 'brief <= 12 lines');
+  },
+
+  // AC (2.3) — a severity-1 finding is promoted under "Release blockers" and a human-decision
+  // finding under "Human decisions needed", each cross-referenced by its source finding id.
+  'release-progress: promotes severity-1 → Release blockers and human-decision → Human decisions, by id': () => {
+    const r = tmpRepo();
+    write(r, 'a.js', '1');
+    writeForeign(r, 'repo-reconcile', '2026-06-01', [
+      { id: 'RC-b10c1a', kind: 'blocker', severity: 1, title: 'Quickstart command errors on a fresh clone', evidence: [{ path: 'README.md', line: 12 }], action: 'none', verified: true },
+    ]);
+    writeForeign(r, 'arch-review', '2026-06-01', [
+      { id: 'AR-dec151', kind: 'decision', severity: 3, title: 'Pick a single auth model before release', evidence: [{ path: 'src/auth.js' }], action: 'human-decision', verified: true },
+    ]);
+    const res = releaseProgress(r, { date: '2026-06-01' });
+    const doc = readFile(r, 'RELEASE.md');
+    const blockers = section(doc, 'Release blockers');
+    const decisions = section(doc, 'Human decisions needed');
+    assert.match(blockers, /Quickstart command errors on a fresh clone \(RC-b10c1a\)/, 'blocker promoted with id cross-reference');
+    assert.match(decisions, /Pick a single auth model before release \(AR-dec151\)/, 'decision promoted with id cross-reference');
+    assert.ok(res.brief.join('\n').includes('RC-b10c1a'), 'new blocker id surfaced in brief');
+    assert.ok(res.brief.join('\n').includes('AR-dec151'), 'new decision id surfaced in brief');
+  },
+
+  // AC (2.3, main gap) — a promoted item whose source finding no longer appears the next night
+  // clears automatically: it moves to Done with closing evidence, its id stays stable, and a dated
+  // status line records the completion. A human-added blocker with no id is never auto-cleared.
+  'release-progress: promoted blocker clears to Done when its source finding disappears': () => {
+    const r = tmpRepo();
+    write(r, 'a.js', '1');
+    // A human-added blocker (no source id) must survive the auto-clear pass untouched.
+    const humanBlocker = '- [ ] Legal review of third-party licensing <!-- nw:IT-cccccc -->';
+    // Night 1: reconcile reports the blocker → it lands under Release blockers.
+    writeForeign(r, 'repo-reconcile', '2026-06-01', [
+      { id: 'RC-b10c1a', kind: 'blocker', severity: 1, title: 'Quickstart command errors', evidence: [{ path: 'README.md', line: 12 }], action: 'none', verified: true },
+    ]);
+    releaseProgress(r, { date: '2026-06-01' });
+    let doc = readFile(r, 'RELEASE.md');
+    // Hand-add the human blocker into the same section after night 1.
+    doc = doc.replace('## Release blockers\n', `## Release blockers\n${humanBlocker}\n`);
+    write(r, 'RELEASE.md', doc);
+    const promotedId = nwIdOf(doc, 'Quickstart command errors');
+    assert.ok(promotedId, 'promoted blocker has an id');
+    const blockers1 = section(doc, 'Release blockers');
+    assert.match(blockers1, /- \[ \] Quickstart command errors \(RC-b10c1a\)/, 'open under Release blockers night 1');
+
+    // Night 2: reconcile reran (doc present) and no longer reports the finding → auto-clear.
+    writeForeign(r, 'repo-reconcile', '2026-06-02', []);
+    const res2 = releaseProgress(r, { date: '2026-06-02' });
+    const doc2 = readFile(r, 'RELEASE.md');
+    const done = section(doc2, 'Done');
+    assert.match(done, /- \[x\] Quickstart command errors \(RC-b10c1a\) — evidence: \.nightwatch\/out\/repo-reconcile-2026-06-02\.json/, 'cleared to Done with closing evidence');
+    assert.strictEqual(nwIdOf(done, 'Quickstart command errors'), promotedId, 'promoted item id stable across the clear');
+    assert.match(doc2, /2026-06-02 — completed: Quickstart command errors \(RC-b10c1a\)/, 'dated status line records the clear');
+    // The human blocker is never auto-completed.
+    assert.ok(doc2.includes(humanBlocker), 'human-added blocker survives the auto-clear untouched');
+    assert.ok(!res2.noChange, 'clearing is a material change');
+  },
+
+  // AC (2.3) — when the emitting job did NOT rerun (no findings doc tonight) we cannot tell resolved
+  // from not-run, so the promoted item is left in place rather than falsely cleared.
+  'release-progress: promoted blocker is NOT cleared when its emitting job did not run': () => {
+    const r = tmpRepo();
+    write(r, 'a.js', '1');
+    writeForeign(r, 'repo-reconcile', '2026-07-01', [
+      { id: 'RC-b10c1a', kind: 'blocker', severity: 1, title: 'Quickstart command errors', evidence: [{ path: 'README.md', line: 12 }], action: 'none', verified: true },
+    ]);
+    releaseProgress(r, { date: '2026-07-01' });
+    // Night 2: no reconcile doc at all → job did not run → keep the blocker open.
+    releaseProgress(r, { date: '2026-07-02' });
+    const doc2 = readFile(r, 'RELEASE.md');
+    const blockers = section(doc2, 'Release blockers');
+    assert.match(blockers, /- \[ \] Quickstart command errors \(RC-b10c1a\)/, 'blocker still open when its job did not rerun');
+    assert.ok(!/- \[x\] Quickstart command errors/.test(doc2), 'not moved to Done');
+  },
+
+  // AC (2.3) — a malformed RELEASE.md writes nothing, emits a setup finding, and returns a brief
+  // carrying last night's snapshot (progress/updated) with an explicit staleness notice.
+  'release-progress: malformed RELEASE.md → nothing written, setup finding, stale-snapshot brief': () => {
+    const r = tmpRepo();
+    write(r, 'a.js', '1');
+    // Frontmatter fence broken by a hand-edit (closing --- gone), but progress/updated still present.
+    const malformed = [
+      '---',
+      'phase: hardening',
+      'target: "v1"',
+      'progress: 42',
+      'updated: 2026-01-05',
+      '# Release progress',
+      '## Notes',
+      'oops I deleted the closing fence',
+      '',
+    ].join('\n');
+    write(r, 'RELEASE.md', malformed);
+    const res = releaseProgress(r, { date: '2026-01-06' });
+    assert.strictEqual(res.wrote, false, 'nothing written');
+    assert.strictEqual(res.malformed, true);
+    assert.strictEqual(readFile(r, 'RELEASE.md'), malformed, 'RELEASE.md left byte-identical');
+    const setup = res.findings.find((f) => f.kind === 'setup');
+    assert.ok(setup, 'a setup finding is emitted');
+    assert.match(setup.title, /frontmatter/i, 'setup finding points at the parse error');
+    assert.ok(res.brief.length && res.brief.length <= 12, 'brief present and <= 12 lines');
+    const briefText = res.brief.join('\n');
+    assert.match(briefText, /stale/i, 'brief carries an explicit staleness notice');
+    assert.match(briefText, /42%/, "brief carries last night's progress snapshot");
+    assert.match(briefText, /2026-01-05/, "brief carries last night's updated date");
   },
 
   // AC6 — standalone functional and never redefines the release target.

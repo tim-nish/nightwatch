@@ -117,7 +117,40 @@ const markdownOnly = {
     assert.strictEqual(t.backend, 'markdown', 'fell back to markdown');
     assert.strictEqual(t.setupFindings.length, 1);
     assert.strictEqual(t.setupFindings[0].kind, 'setup');
+    assert.match(t.setupFindings[0].title, /Unknown tracking backend "sqlite"/);
     assert.strictEqual(fs.existsSync(path.join(r, 'RELEASE.md')), false, 'no write happened on open (no migration)');
+  },
+
+  // AC — `tracking.backend: beads` with no `bd` on PATH → setup finding naming the missing tool,
+  // markdown fallback, no crash, no partial write. PATH is emptied to make the probe deterministic.
+  'tracker: recognized backend beads with no bd on PATH → setup finding names bd, markdown fallback': () => {
+    const r = tmpRepo();
+    const savedPath = process.env.PATH;
+    process.env.PATH = ''; // local-only probe resolves nothing → bd unavailable, deterministically
+    let t;
+    try { t = openTracker(r, { tracking: { backend: 'beads' } }); }
+    finally { process.env.PATH = savedPath; }
+    assert.strictEqual(t.backend, 'markdown', 'fell back to markdown');
+    assert.strictEqual(t.setupFindings.length, 1);
+    assert.strictEqual(t.setupFindings[0].kind, 'setup');
+    assert.match(t.setupFindings[0].title, /"bd" on PATH/, 'names the missing tool');
+    assert.strictEqual(fs.existsSync(path.join(r, 'RELEASE.md')), false, 'no partial write on open (no migration)');
+    // A no-op flush after fallback still just serializes the markdown template — no crash.
+    t.flush();
+    assert.strictEqual(readFile(r, 'RELEASE.md'), TEMPLATE, 'fallback backend writes clean markdown');
+  },
+
+  // backlogmd is likewise recognized and probes for `backlog`.
+  'tracker: recognized backend backlogmd with no backlog on PATH → setup finding names backlog': () => {
+    const r = tmpRepo();
+    const savedPath = process.env.PATH;
+    process.env.PATH = '';
+    let t;
+    try { t = openTracker(r, { tracking: { backend: 'backlogmd' } }); }
+    finally { process.env.PATH = savedPath; }
+    assert.strictEqual(t.backend, 'markdown');
+    assert.match(t.setupFindings[0].title, /"backlog" on PATH/);
+    assert.strictEqual(fs.existsSync(path.join(r, 'RELEASE.md')), false, 'no partial write');
   },
 };
 

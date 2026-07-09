@@ -41,6 +41,16 @@ const CHECK_META = {
 
 const SECTION_RANK = { blockers: 0, implementation: 1, documentation: 2 };
 
+// Which foreign job a promoted item's source finding came from, keyed by the finding-id prefix
+// (findings.js JOB_PREFIX). Only these two jobs feed the promotion sections, so a promoted item
+// can be traced back to the job that must rerun before we may auto-clear it.
+const PROMOTION_JOB_BY_PREFIX = { RC: 'repo-reconcile', AR: 'arch-review' };
+// A machine-promoted blocker/decision renders as `<title> (<FINDING-ID>)` (a rendered evidence
+// suffix may follow after a round-trip); this recovers the source finding id from anywhere in it.
+const PROMOTED_ID_RE = /\(([A-Z]{2}-[0-9a-f]{6})\)/;
+// A round-tripped item title absorbs the rendered `— evidence: …` tail; strip it before re-upsert.
+const EVIDENCE_SUFFIX_RE = /\s+—\s+evidence:.*$/;
+
 function evStr(ev) {
   if (!Array.isArray(ev) || !ev.length) return '';
   return ev.map((e) => (e && e.line != null ? `${e.path}:${e.line}` : e && e.path)).filter(Boolean).join(', ');
@@ -126,15 +136,27 @@ function releaseProgress(root, opts = {}) {
 
   const releaseText = readFileSafe(path.join(root, 'RELEASE.md'));
 
-  // Malformed hand-edit (frontmatter fence gone) → write nothing, surface a setup finding, let
-  // the brief carry last night's snapshot (normative safety rule).
+  // Malformed hand-edit (frontmatter fence gone) → write nothing, surface a setup finding, and let
+  // the brief carry last night's snapshot with an explicit staleness notice (normative safety rule).
+  // Frontmatter can't be parsed structurally here, so recover progress/updated best-effort by line.
   if (releaseText != null && !/^---\n[\s\S]*?\n---/.test(releaseText)) {
     const f = makeFinding('release-progress', {
       kind: 'setup', severity: 3, action: 'daytime-task', verified: false,
       title: 'RELEASE.md lost its frontmatter — repair by hand or delete it to regenerate',
       locus: 'release:malformed', evidence: [{ path: 'RELEASE.md' }], extra: undefined,
     });
-    return { wrote: false, malformed: true, noChange: false, date, progress: null, prevProgress: 0, delta: 0, notice: null, brief: [], findings: [f], degraded };
+    const pm = releaseText.match(/^progress:\s*(\d+)\b/m);
+    const um = releaseText.match(/^updated:\s*(\d{4}-\d{2}-\d{2})\b/m);
+    const staleProgress = pm ? Number(pm[1]) : null;
+    const asOf = um ? um[1] : 'an unknown date';
+    const brief = [
+      'RELEASE.md is malformed (frontmatter broken by a hand-edit) — showing last night\'s snapshot; NOT refreshed tonight.',
+      staleProgress != null
+        ? `Release progress (stale, as of ${asOf}): ${staleProgress}%.`
+        : 'Release progress (stale): unknown — last snapshot unreadable.',
+      'Repair RELEASE.md by hand or delete it to regenerate; nothing was written tonight.',
+    ];
+    return { wrote: false, malformed: true, noChange: false, date, progress: staleProgress, prevProgress: 0, delta: 0, notice: null, brief, findings: [f, briefFinding(brief)], degraded };
   }
 
   const prevFm = parseFrontmatter(releaseText != null ? releaseText : '');
@@ -205,12 +227,21 @@ function releaseProgress(root, opts = {}) {
   }
 
   // ---- Promote tonight's other jobs' findings (standalone-safe: only if present) ----
+  // Track which foreign jobs actually produced a doc tonight and which finding ids they carried.
+  // Both are needed to auto-clear a promoted item safely: a source finding counts as "resolved"
+  // only when its emitting job reran tonight (doc present) and no longer lists the id — an absent
+  // doc means the job did not run, which we must not mistake for a fixed finding.
   const newBlockers = [];
   const newDecisions = [];
   const foreign = [];
+  const foreignJobsSeen = new Set();
+  const foreignIds = new Set();
   for (const job of ['repo-reconcile', 'arch-review']) {
     const doc = safeReadForeign(root, job, date);
-    if (doc && Array.isArray(doc.findings)) foreign.push(...doc.findings);
+    if (doc && Array.isArray(doc.findings)) {
+      foreignJobsSeen.add(job);
+      for (const f of doc.findings) { foreign.push(f); if (f && f.id) foreignIds.add(f.id); }
+    }
   }
   for (const f of foreign) {
     if (f.severity === 1 || f.kind === 'blocker') {
@@ -225,6 +256,33 @@ function releaseProgress(root, opts = {}) {
       machineIds.add(id);
       if (!priorById.get(id)) { store.upsertItem({ key, title: `${f.title} (${f.id})`, section: 'decisions', evidence: f.evidence || [] }); newDecisions.push(f); }
     }
+  }
+
+  // ---- Clear promoted items whose source finding no longer appears → move to Done ----
+  // A machine-promoted blocker/decision (key release:blocker:<id> / release:decision:<id>, title
+  // carrying `(<FINDING-ID>)`) whose source finding is absent from tonight's rerun clears itself
+  // with closing evidence. A human-added item in these sections has no reconstructable id and is
+  // NEVER auto-completed. Items still reported tonight were re-upserted above (id already in
+  // machineIds) and are skipped here.
+  for (const it of priorItems) {
+    if (it.status !== 'open' || machineIds.has(it.id)) continue;
+    if (it.section !== 'blockers' && it.section !== 'decisions') continue;
+    const m = it.title.match(PROMOTED_ID_RE);
+    if (!m) continue; // human-added item in a promotion section — leave it alone
+    const fid = m[1];
+    const keyPrefix = it.section === 'blockers' ? 'release:blocker:' : 'release:decision:';
+    if (itemId(keyPrefix + fid) !== it.id) continue; // title id doesn't reconstruct this item → human
+    const srcJob = PROMOTION_JOB_BY_PREFIX[fid.slice(0, 2)];
+    if (!srcJob || !foreignJobsSeen.has(srcJob)) continue; // emitting job didn't rerun → can't tell
+    if (foreignIds.has(fid)) continue; // still reported tonight → still active
+    // Closing evidence: the rerun that no longer reports the finding. Strip any round-tripped
+    // evidence tail from the title so the Done line carries one clean evidence pointer.
+    const title = it.title.replace(EVIDENCE_SUFFIX_RE, '');
+    const evidence = [{ path: `.nightwatch/out/${srcJob}-${date}.json` }];
+    store.upsertItem({ id: it.id, title, section: it.section, evidence });
+    store.completeItem(it.id);
+    machineIds.add(it.id);
+    completedThisRun.push({ title, evidence });
   }
 
   // ---- Human items: never deleted; a plainly-obsolete one is tagged, not removed ----
