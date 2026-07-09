@@ -1,0 +1,73 @@
+{
+  "forbidden": [
+    {
+      "name": "layer-core-not-to-ui",
+      "comment": "Layer \"core\" may not depend on layer \"ui\" (declared may_depend_on)",
+      "severity": "error",
+      "from": {
+        "path": "^src\\/core\\/.*$"
+      },
+      "to": {
+        "path": "^src\\/ui\\/.*$"
+      }
+    },
+    {
+      "name": "layer-shared-not-to-core",
+      "comment": "Layer \"shared\" may not depend on layer \"core\" (declared may_depend_on)",
+      "severity": "error",
+      "from": {
+        "path": "^src\\/shared\\/.*$"
+      },
+      "to": {
+        "path": "^src\\/core\\/.*$"
+      }
+    },
+    {
+      "name": "layer-shared-not-to-ui",
+      "comment": "Layer \"shared\" may not depend on layer \"ui\" (declared may_depend_on)",
+      "severity": "error",
+      "from": {
+        "path": "^src\\/shared\\/.*$"
+      },
+      "to": {
+        "path": "^src\\/ui\\/.*$"
+      }
+    },
+    {
+      "name": "layer-ui-not-to-core",
+      "comment": "Layer \"ui\" may not depend on layer \"core\" (declared may_depend_on)",
+      "severity": "error",
+      "from": {
+        "path": "^src\\/ui\\/.*$"
+      },
+      "to": {
+        "path": "^src\\/core\\/.*$"
+      }
+    },
+    {
+      "name": "no-circular",
+      "comment": "Circular dependency (import cycle)",
+      "severity": "error",
+      "from": {},
+      "to": {
+        "circular": true
+      }
+    },
+    {
+      "name": "no-orphans",
+      "comment": "Orphan module — imported by nothing and importing nothing",
+      "severity": "warn",
+      "from": {
+        "orphan": true,
+        "pathNot": "(^|/)\\.[^/]+$"
+      },
+      "to": {}
+    }
+  ],
+  "options": {
+    "doNotFollow": {
+      "path": "node_modules"
+    },
+    "tsPreCompilationDeps": true
+  }
+}
