@@ -34,7 +34,7 @@ module.exports = {
     const norm = universalGitSignals(r, { couplingMinCommits: 5 });
     const doc = writeSignals(r, '2000-01-01', norm);
     assert.strictEqual(doc.schema, 1);
-    assert.ok(Array.isArray(doc.sources) && doc.sources[0].name === 'universal-git');
+    assert.ok(Array.isArray(doc.sources) && doc.sources[0].extractor === 'universal-git');
     assert.ok(Array.isArray(doc.degraded));
     assert.ok(doc.signals.length >= 1);
     for (const s of doc.signals) {

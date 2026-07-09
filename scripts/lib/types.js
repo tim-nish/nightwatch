@@ -138,7 +138,8 @@
  * @property {number} schema Major schema version; consumers refuse a higher major.
  * @property {string} job Always `signals`.
  * @property {string} date
- * @property {{ name: string, signals?: number }[]} sources Extractors that ran this run.
+ * @property {{ extractor: string, tool?: string }[]} sources Extractors that contributed this
+ *   run (`{extractor}` for built-ins, `{extractor, tool}` for tool adapters).
  * @property {string[]} degraded Setup/skip notices (e.g. shallow history).
  * @property {Signal[]} signals
  */
