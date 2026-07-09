@@ -24,6 +24,30 @@ const JOB_PREFIX = {
 const KINDS = ['drift', 'arch', 'blocker', 'decision', 'setup', 'info'];
 const ACTIONS = ['patch-available', 'human-decision', 'daytime-task', 'none'];
 
+// Findings-document major schema version. Consumers reject a document whose major is
+// higher than this rather than misreading a shape they don't understand (FR6). Bump only
+// on a breaking change to the Finding/FindingsDoc shape.
+const SCHEMA_VERSION = 1;
+
+/**
+ * Normalize a single evidence entry to a structured `{path, line}` object. Callers may pass
+ * a bare `"path"` or `"path:line"` string for convenience; findings always store objects so
+ * downstream consumers read `.path`/`.line` uniformly (FR6).
+ */
+function normalizeEvidence(e) {
+  if (e == null) return null;
+  if (typeof e === 'string') {
+    const m = e.match(/^(.*):(\d+)$/);
+    return m ? { path: m[1], line: Number(m[2]) } : { path: e };
+  }
+  if (typeof e === 'object' && typeof e.path === 'string') {
+    const out = { path: e.path };
+    if (e.line != null) out.line = e.line;
+    return out;
+  }
+  throw new Error('evidence entries must be {path, line?} objects or "path[:line]" strings');
+}
+
 /**
  * Stable id: PREFIX-<6 hex of sha1(locus|kind)>. `locus` is a caller-supplied string
  * uniquely naming *what* the finding is about (e.g. "README.md:41::drift-flag:--tag"),
@@ -42,7 +66,7 @@ function makeFinding(job, { kind, severity, title, evidence, action, verified, l
   if (!title || typeof title !== 'string') throw new Error('title required');
   const act = action || 'none';
   if (!ACTIONS.includes(act)) throw new Error(`bad action: ${act}`);
-  const ev = Array.isArray(evidence) ? evidence : [];
+  const ev = (Array.isArray(evidence) ? evidence : []).map(normalizeEvidence).filter(Boolean);
   return Object.assign({
     id: makeId(job, kind, locus != null ? locus : title),
     kind,
@@ -57,19 +81,54 @@ function makeFinding(job, { kind, severity, title, evidence, action, verified, l
 function findingsPath(root, job, date) { return path.join(outDir(root), `${job}-${date}.json`); }
 
 function writeFindings(root, job, date, degraded, findings) {
-  const doc = { job, date, degraded: degraded || [], findings: findings || [] };
+  const doc = { schema: SCHEMA_VERSION, job, date, degraded: degraded || [], findings: findings || [] };
   writeJSON(findingsPath(root, job, date), doc);
   return doc;
 }
 
-/** @returns {FindingsDoc | null} */
-function readFindings(root, job, date) { return readJSONSafe(findingsPath(root, job, date)); }
+/**
+ * Reject a document whose major schema is newer than we understand (FR6). A missing `schema`
+ * is treated as v1 (pre-versioning docs); a lower version is still readable.
+ * @param {any} doc @returns {FindingsDoc}
+ */
+function assertReadableSchema(doc) {
+  const v = typeof doc.schema === 'number' ? Math.floor(doc.schema) : 1;
+  if (v > SCHEMA_VERSION) {
+    throw new Error(`findings schema v${v} is newer than supported v${SCHEMA_VERSION}; refusing to read`);
+  }
+  return doc;
+}
+
+/**
+ * @returns {FindingsDoc | null}
+ * @throws if the file's major schema version exceeds this build's (FR6).
+ */
+function readFindings(root, job, date) {
+  const doc = readJSONSafe(findingsPath(root, job, date));
+  return doc == null ? null : assertReadableSchema(doc);
+}
 
 /** Read all job findings docs present for a date. Missing jobs simply absent. */
 function readAllFindings(root, date, jobs) {
   const out = [];
   for (const job of jobs) { const d = readFindings(root, job, date); if (d) out.push(d); }
   return out;
+}
+
+/**
+ * Collapse findings sharing an id to one survivor, keeping recurrence countable by id (FR7).
+ * First occurrence of each id wins (stable order); `counts` maps id → number of occurrences.
+ * @param {Finding[]} findings
+ * @returns {{ findings: Finding[], counts: Map<string, number> }}
+ */
+function dedupeFindings(findings) {
+  const survivors = new Map();
+  const counts = new Map();
+  for (const f of findings || []) {
+    counts.set(f.id, (counts.get(f.id) || 0) + 1);
+    if (!survivors.has(f.id)) survivors.set(f.id, f);
+  }
+  return { findings: [...survivors.values()], counts };
 }
 
 // ---- Ledger (append-only jsonl; every finding ever, with recurrence + acted marks) ----
@@ -108,7 +167,7 @@ function recurrenceCounts(root) {
 }
 
 module.exports = {
-  JOB_PREFIX, KINDS, ACTIONS, makeId, makeFinding,
-  findingsPath, writeFindings, readFindings, readAllFindings,
+  JOB_PREFIX, KINDS, ACTIONS, SCHEMA_VERSION, makeId, makeFinding, normalizeEvidence, dedupeFindings,
+  findingsPath, writeFindings, readFindings, readAllFindings, assertReadableSchema,
   ledgerPath, readLedger, appendLedger, recurrenceCounts,
 };

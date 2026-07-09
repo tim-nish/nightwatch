@@ -3,7 +3,11 @@ const assert = require('assert');
 const path = require('path');
 const { tmpRepo, write } = require('./helpers');
 const { loadConfig, parseStateBlock, deepMerge, DEFAULTS } = require('../scripts/lib/config');
-const { makeId, makeFinding, appendLedger, recurrenceCounts } = require('../scripts/lib/findings');
+const {
+  makeId, makeFinding, appendLedger, recurrenceCounts,
+  writeFindings, readFindings, dedupeFindings, SCHEMA_VERSION,
+} = require('../scripts/lib/findings');
+const { writeJSON, outDir } = require('../scripts/lib/util');
 
 module.exports = {
   'config: absent files → shipped defaults': () => {
@@ -72,6 +76,55 @@ module.exports = {
     assert.throws(() => makeFinding('nightwatch', { kind: 'bogus', severity: 1, title: 't' }));
     assert.throws(() => makeFinding('nightwatch', { kind: 'drift', severity: 9, title: 't' }));
     assert.throws(() => makeFinding('nightwatch', { kind: 'drift', severity: 1 }));
+  },
+
+  'findings: makeFinding normalizes evidence to structured {path, line} objects': () => {
+    const f = makeFinding('repo-reconcile', {
+      kind: 'drift', severity: 2, title: 't', locus: 'x',
+      evidence: ['README.md', 'src/a.js:41', { path: 'src/b.js', line: 7 }],
+    });
+    assert.deepStrictEqual(f.evidence, [
+      { path: 'README.md' },
+      { path: 'src/a.js', line: 41 },
+      { path: 'src/b.js', line: 7 },
+    ]);
+  },
+
+  'findings: written doc carries schema:1, job, date, degraded, findings': () => {
+    const r = tmpRepo();
+    const doc = writeFindings(r, 'repo-reconcile', '2000-01-01', ['note'], [
+      makeFinding('repo-reconcile', { kind: 'drift', severity: 2, title: 't', locus: 'x' }),
+    ]);
+    assert.strictEqual(doc.schema, SCHEMA_VERSION);
+    assert.strictEqual(doc.schema, 1);
+    assert.strictEqual(doc.job, 'repo-reconcile');
+    assert.strictEqual(doc.date, '2000-01-01');
+    assert.deepStrictEqual(doc.degraded, ['note']);
+    assert.strictEqual(doc.findings.length, 1);
+    // round-trips back through readFindings
+    assert.deepStrictEqual(readFindings(r, 'repo-reconcile', '2000-01-01'), doc);
+  },
+
+  'findings: readFindings rejects a higher major schema rather than misreading it': () => {
+    const r = tmpRepo();
+    writeJSON(path.join(outDir(r), 'repo-reconcile-2000-01-02.json'),
+      { schema: 2, job: 'repo-reconcile', date: '2000-01-02', degraded: [], findings: [] });
+    assert.throws(() => readFindings(r, 'repo-reconcile', '2000-01-02'), /schema v2 is newer/);
+    // a missing schema is treated as v1 and still reads
+    writeJSON(path.join(outDir(r), 'repo-reconcile-2000-01-03.json'),
+      { job: 'repo-reconcile', date: '2000-01-03', degraded: [], findings: [] });
+    assert.ok(readFindings(r, 'repo-reconcile', '2000-01-03'));
+  },
+
+  'findings: dedupeFindings keeps one survivor per id and counts recurrence': () => {
+    const mk = (locus, title) => makeFinding('repo-reconcile', { kind: 'drift', severity: 2, title, locus });
+    const a1 = mk('L1', 'first'); const a2 = mk('L1', 'retitled'); const b = mk('L2', 'other');
+    assert.strictEqual(a1.id, a2.id, 'same locus → same id');
+    const { findings, counts } = dedupeFindings([a1, a2, b]);
+    assert.strictEqual(findings.length, 2, 'one survivor per id');
+    assert.strictEqual(findings[0], a1, 'first occurrence survives');
+    assert.strictEqual(counts.get(a1.id), 2);
+    assert.strictEqual(counts.get(b.id), 1);
   },
 
   'ledger: recurrence counts prior appearances by id': () => {

@@ -26,6 +26,14 @@
  */
 
 /**
+ * A structured evidence locus — a concrete, checkable pointer into the repo. Findings store
+ * these objects (never bare strings) so every consumer reads `.path`/`.line` uniformly.
+ * @typedef {object} EvidenceItem
+ * @property {string} path Repo-relative path the finding points at.
+ * @property {number} [line] 1-based line number, when the evidence is line-specific.
+ */
+
+/**
  * A single finding — the inter-command interface unit. Ids are stable across runs so the
  * ledger can dedupe, count recurrence, and track acted-on/dismissed state.
  * @typedef {object} Finding
@@ -33,7 +41,7 @@
  * @property {FindingKind} kind
  * @property {Severity} severity
  * @property {string} title
- * @property {string[]} evidence Concrete, checkable evidence lines.
+ * @property {EvidenceItem[]} evidence Concrete, checkable `{path, line}` evidence loci.
  * @property {FindingAction} action
  * @property {boolean} verified Whether the finding survived adversarial verification.
  */
@@ -41,6 +49,7 @@
 /**
  * The per-job findings document written to `.nightwatch/out/<job>-<date>.json`.
  * @typedef {object} FindingsDoc
+ * @property {number} schema Major schema version; consumers reject a higher major (FR6).
  * @property {Job} job
  * @property {string} date ISO `YYYY-MM-DD`.
  * @property {string[]} degraded Human-readable notes about signals that could not be gathered.
