@@ -81,6 +81,7 @@
  * @property {string} extractors
  * @property {LayerRule[]} layers
  * @property {{ disable: string[] }} release_checks
+ * @property {{ backend: string }} tracking Tracking store backend selector (default `markdown`).
  * @property {boolean} patch_branch
  * @property {number} timeout_minutes
  */

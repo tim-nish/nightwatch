@@ -11,5 +11,6 @@ ignore:   ["dist/**", "vendor/**", "node_modules/**", ".git/**"]
 extractors: auto            # or a list, e.g. [node, python]
 layers: []                  # e.g. [{name: core, path: "src/core/**", may_depend_on: []}]
 release_checks: {disable: []}   # e.g. [changelog] ; also: {todo_threshold: 40}
+tracking: {backend: markdown}   # tracker/ledger store backend (markdown ships; others opt-in)
 patch_branch: false         # true -> also apply derived-doc patches on nightwatch/* branches
 timeout_minutes: 30
