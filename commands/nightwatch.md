@@ -33,18 +33,42 @@ before running anything, and call the result `${NW_ROOT}` for the rest of this f
 
 ## `init` mode (daytime, interactive — the ONLY mode that may ask questions)
 
-Run this when the user types `/nightwatch init`.
+Run this when the user types `/nightwatch init`. The interview is yours to conduct; the file
+writing, the adapter probe, and the template instantiation are **deterministic** and delegated
+to `${NW_ROOT}/scripts/init.js` so setup is reproducible and never improvised.
 
-1. Verify this is a git checkout. Detect whether `STATE.md` and `.nightwatch/config.yaml` exist.
-2. Interview the human (you may ask questions here): authority per area, phase, release target
-   and definition of done, optional layering rules.
-3. Write `STATE.md` from `${NW_ROOT}/templates/STATE.md` and, if the user wants
-   operational overrides, `.nightwatch/config.yaml` from the template. Add `.nightwatch/out/` to
-   the repo's `.gitignore`.
-4. Run each job once in dry-run and show the first brief (see the overnight flow below with
-   `--force`). Stop and let the human review.
+1. **Precondition.** Verify this is a git checkout (`init.js` aborts with `not-a-git-checkout`
+   otherwise). `init.js` also detects whether `STATE.md` / `.nightwatch/config.yaml` already exist
+   — it will **never clobber** an existing declaration, so this mode is safe to re-run.
 
-Overnight mode never creates or edits `STATE.md` or `config.yaml`.
+2. **Probe the extractor adapters** (read-only, writes nothing):
+   ```
+   node ${NW_ROOT}/scripts/init.js --repo . --probe
+   ```
+   This runs each adapter's `detect`/`available` **locally only** (host repo's `node_modules/.bin`
+   or a venv, then `PATH` — never install, never network) and prints a per-adapter report
+   `{ name, tool, detected, available, installHint }`. For every **detected-but-unavailable** tool,
+   offer the human its `installHint` — **this is the ONLY moment tool installation is ever
+   suggested.** Do not run the install yourself; hand the human the command.
+
+3. **Interview the human** (you may ask questions here — the one mode that may): authority per area,
+   phase, release target and definition of done, optional layering rules.
+
+4. **Write the declarations from templates.** Run:
+   ```
+   node ${NW_ROOT}/scripts/init.js --repo .
+   ```
+   This instantiates `STATE.md` from `${NW_ROOT}/templates/STATE.md` and
+   `.nightwatch/config.yaml` from `${NW_ROOT}/templates/config.yaml` **only where absent** (an
+   existing declaration is preserved byte-for-byte), and adds `.nightwatch/out/` to the repo's
+   `.gitignore`. Pass `--no-config` to write `STATE.md` only. Then help the human fill the freshly
+   written declarations from the interview answers (authority, phase, release, layers).
+
+5. **Dry-run and show the first brief.** Run each job once and assemble the first brief (the
+   overnight flow below with `--force`). Stop and let the human review.
+
+Overnight mode never creates or edits `STATE.md` or `config.yaml`, and never installs anything —
+`init` is the sole write path for the declaration files and the sole place installs are suggested.
 
 ---
 
