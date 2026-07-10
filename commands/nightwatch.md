@@ -109,6 +109,14 @@ member left out (with its `next_due` date); `steps` is `due…` followed by `col
    `.nightwatch/out/run-status-<date>.json` as
    `{ "jobs": [ {"job","status":"ok|crashed|timeout|skipped","note","tokens"} ] }`.
 
+   **Live narration (interactive runs only, FR39).** As each lifecycle event happens, narrate it as
+   **exactly one line** — member started, member finished (`ok`/`crashed`/`timeout`/`skipped`), and
+   brief assembly — using the *same* `{job, status, tokens, note}` you record to
+   `run-status-<date>.json`, so the live line and the persisted fact never disagree. The formatters
+   in `${NW_ROOT}/scripts/lib/narrate.js` produce those lines; `node ${NW_ROOT}/scripts/narrate.js
+   --repo .` re-renders them from the record after the fact. On **scheduled** runs, narrate nothing
+   — the facts still land in `run-status-<date>.json`.
+
 4. **Assemble the brief** (deterministic — truncation must be mechanical):
    ```
    node ${NW_ROOT}/scripts/collect-brief.js --repo .
