@@ -1,6 +1,6 @@
 ---
-description: Orchestrator — run what's due (reconcile → arch-review → release-progress) and emit one capped, ranked morning brief. `init` runs interactive daytime setup. The scheduled entrypoint.
-argument-hint: "[init] [--repo .] [--force] [--yes]"
+description: Orchestrator — run what's due (reconcile → arch-review → release-progress) and emit one capped, ranked morning brief. `init` runs interactive daytime setup; `review` walks the morning brief. The scheduled entrypoint.
+argument-hint: "[init|review] [--repo .] [--force] [--yes] [--brief <date>]"
 ---
 
 # /nightwatch
@@ -85,6 +85,40 @@ to `${NW_ROOT}/scripts/init.js` so setup is reproducible and never improvised.
 Overnight mode never creates or edits `STATE.md` or `config.yaml`, **never reclassifies scoping**,
 and never installs anything — `init` is the sole write path for the declaration files, the sole
 place dev-tooling is classified, and the sole place installs are suggested.
+
+---
+
+## `review` mode (daytime, interactive)
+
+Run this when the user types `/nightwatch review` (optionally `--brief <date>` to review an older
+dated brief instead of the current `MORNING.md`). You walk the brief's **unmarked** findings in
+brief order and record the human's decision on each. The input vocabulary is **strictly three
+selections** — nothing else: **acted-on**, **dismissed**, **skip for now**. Interpretation is your
+job; writing is deterministic and delegated.
+
+1. **List the walk queue** (read-only):
+   ```
+   node ${NW_ROOT}/scripts/review-feedback.js --repo . --list
+   ```
+   This prints every finding in brief order with its box state; walk the ones with `marked: false`.
+
+2. **For each unmarked finding**, present it and offer the three selections. On a decision:
+   - **acted-on** / **dismissed** → record it immediately:
+     ```
+     node ${NW_ROOT}/scripts/review-feedback.js --repo . --id <finding-id> --mark acted-on|dismissed
+     ```
+     This appends exactly one `type:"feedback"` row via the tracking store's `recordFeedback()`
+     (the sole sanctioned ledger writer), **dated to the brief under review**, and rewrites that
+     finding's checkbox in both `MORNING.md` and the dated brief — so file state and ledger state
+     never disagree. An already-recorded id is a **stated no-op** (`status:"noop"`), so review, the
+     morning backfill, and manual checkbox edits compose in any order without double-counting.
+   - **skip for now** → do nothing; leave the box empty and move on.
+
+3. **Quitting mid-review loses nothing** — every decision was already written when it was made.
+
+Manual checkbox editing remains fully supported: the brief's footer names both methods, and the
+overnight backfill picks up hand-marked boxes exactly as before. `review` writes only inside
+`.nightwatch/**`, spends no tokens, and never runs a member job.
 
 ---
 

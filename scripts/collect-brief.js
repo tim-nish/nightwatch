@@ -148,7 +148,6 @@ function collect(root, date, { force = false } = {}) {
   L.push('## Appendix (overflow — ids only)');
   if (overflow.length) L.push('- ' + overflow.map((f) => `\`${f.id}\``).join(', ')); else L.push('- none');
   L.push('');
-
   // Scope statement (FR42): name the excluded top-level trees so a wrong scope is visible on the
   // brief, never silent. `ignore` (never look) and `dev_tooling` (not the product) are unioned.
   const excluded = excludedTopDirs(root, config);
@@ -157,7 +156,9 @@ function collect(root, date, { force = false } = {}) {
     : 'Scope: no top-level directories excluded — edit `.nightwatch/config.yaml` to change.');
   L.push('');
 
-  L.push('---', `_Check a box (\`[x]\`) to mark acted-on, or \`[-]\` to dismiss; the next run backfills the ledger. Total findings: ${all.length}, shown: ${included.size}, cap: ${cap}._`);
+  // Footer names BOTH feedback methods (FR44): the interactive review command and hand-editing the
+  // checkboxes — either records the same ledger feedback.
+  L.push('---', `_Review interactively with \`/nightwatch review\` — or mark boxes by hand (\`[x]\` acted-on, \`[-]\` dismiss); the next run backfills the ledger. Total findings: ${all.length}, shown: ${included.size}, cap: ${cap}._`);
 
   const briefText = L.join('\n') + '\n';
 
