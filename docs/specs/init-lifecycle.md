@@ -1,7 +1,8 @@
 # Spec: `/nightwatch init` lifecycle — documented model + non-destructive `--update`
 
-- **Status:** proposed 2026-07-10. Not yet folded into `nightwatch.md` (pending triage of the
-  second-round findings). Implementation pending. **Depends on** [file-layout](file-layout.md)
+- **Status:** accepted 2026-07-10 — **folded into `nightwatch.md`** §6 (`init` mode, brief
+  drift nudge; FR51–FR53 in the epics requirements inventory). Implementation pending
+  (Epic 7 candidate). **Depends on** [file-layout](file-layout.md)
   (0008): `--update` reads and writes declarations at their resolved locations
   (`.nightwatch/STATE.md`, the configured `release_path`).
 - **Motivated by:** dogfooding finding

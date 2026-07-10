@@ -3,7 +3,8 @@
 - **Status:** FR37–FR41 accepted 2026-07-10 and **implemented in Epic 6** (merged). The
   signals-only `--dry-run` tier in P5 remains **deferred**, not accepted. **P7 (first-run
   confirmation-screen refinements)** is a second-round addition from finding 0007 — accepted
-  2026-07-10, implementation pending.
+  2026-07-10 and **folded into `nightwatch.md` §6 (FR45–FR47)**; implementation pending
+  (Epic 7 candidate).
 - **Motivated by:** dogfooding findings
   [0001 — First run gives no visibility](../dogfooding/0001-first-run-visibility.md),
   [0005 — No preview of analysis scope](../dogfooding/0005-analysis-scope-preview.md), and
