@@ -42,8 +42,13 @@ a broken build outranks all drift.
 3. Verify each claim against the surface inventory plus targeted code reads. Verdict per claim:
    `holds` / `drifted` / `unverifiable-statically` (needs a live run — list it for a daytime
    check, never guess).
-4. **Adversarial pass:** in a separate reasoning pass (ideally a subagent), attempt to *refute*
-   each `drifted` verdict. Only survivors get `verified: true` and reach the brief.
+4. **Adversarial verification pass (normative):** dispatch a **second subagent** whose sole job is
+   to *refute* each `drifted` verdict — argue the flag/command/behavior actually exists, the claim
+   was misread, or the surface probe missed it. A verdict is set `verified: true` **only if it
+   survives** that refutation. **Only verified findings enter the brief;** refuted verdicts are
+   dropped (kept in the findings doc's `refuted` list for the record, never shown as a proposal and
+   never patched). The deterministic harness (`${NW_ROOT}/scripts/reconcile.js`) drives the pass
+   and applies the survivor/drop rule; the refutation itself is your judgment.
 5. Direction of fix, from the authority role of the artifact the claim lives in:
    - `role: derived` (e.g. README follows code) → mechanically fixable. Generate a unified-diff
      **patch file** at `.nightwatch/out/reconcile-<date>.patch`. Patch files are the default and
