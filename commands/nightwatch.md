@@ -89,8 +89,12 @@ to `${NW_ROOT}/scripts/init.js` so setup is reproducible and never improvised.
    byte-for-byte), writes a nested `.nightwatch/.gitignore` ignoring `out/` **without touching the
    project's root `.gitignore`**, and persists the human-confirmed `--dev-tooling` set into
    config.yaml's `dev_tooling:` (extends the shipped defaults). Omit `--dev-tooling` if nothing was
-   confirmed; pass `--no-config` to write `STATE.md` only. Then help the human fill the freshly
-   written declarations from the interview answers (authority, phase, release, layers).
+   confirmed; pass `--no-config` to write `STATE.md` only. **init is create-only for declarations**
+   — it instantiates each only where absent and never refreshes an existing one. Surface each
+   declaration's `message` from the JSON report verbatim: a created file is reported as created, and
+   an already-existing one as *"…already exists (path) — not updated; edit it directly or run
+   `/nightwatch init --update`."* so the human learns the boundary. Then help the human fill the
+   freshly written declarations from the interview answers (authority, phase, release, layers).
 
 7. **Present the plan and initial validation run.** Run the overnight flow below with `--force` (a first-run
    scheduler call reports `gate.required`). Show the plan, estimate, and scope preview — this is

@@ -58,6 +58,44 @@ module.exports = {
     assert.strictEqual(readFile(root, '.nightwatch/config.yaml'), shippedTemplate('config.yaml'));
   },
 
+  // ---- Story 7.3: create-only lifecycle & honest reporting (FR51) ------------------------------
+  'init: honest reporting — a created declaration carries a one-line message': () => {
+    const root = tmpRepo();
+    gitInit(root); commit(root, 'init');
+    const rep = writeDeclarations(root);
+    for (const r of rep) {
+      assert.strictEqual(r.written, true);
+      assert.match(r.message, /^created \.nightwatch\/.+ from the shipped template\.$/, 'created message');
+    }
+  },
+
+  'init: honest reporting — re-run reports each existing declaration as not-updated, pointing at --update': () => {
+    const root = tmpRepo();
+    gitInit(root); commit(root, 'init');
+    writeDeclarations(root); // first run creates both under .nightwatch/
+
+    const rep = writeDeclarations(root); // create-only re-run
+    for (const r of rep) {
+      assert.strictEqual(r.written, false, 'existing declaration not rewritten');
+      assert.strictEqual(r.reason, 'exists');
+      assert.match(r.message, /already exists .* — not updated; edit it directly or run `\/nightwatch init --update`\./);
+    }
+    const state = rep.find((r) => r.file === 'state');
+    assert.strictEqual(state.existing, '.nightwatch/STATE.md', 'names the nested file that holds it');
+    assert.match(state.message, /^STATE\.md already exists \(\.nightwatch\/STATE\.md\)/);
+  },
+
+  'init: honest reporting — a legacy ROOT STATE.md is reported at its actual path': () => {
+    const root = tmpRepo();
+    gitInit(root);
+    write(root, 'STATE.md', '# legacy\n```yaml\nphase: x\n```\n');
+    commit(root, 'legacy');
+    const rep = writeDeclarations(root);
+    const state = rep.find((r) => r.file === 'state');
+    assert.strictEqual(state.existing, 'STATE.md', 'legacy root path named, not the nested dest');
+    assert.match(state.message, /^STATE\.md already exists \(STATE\.md\)/);
+  },
+
   'init: ignores out/ via a nested .nightwatch/.gitignore, never the root .gitignore, idempotently': () => {
     const root = tmpRepo();
     gitInit(root); commit(root, 'init');
