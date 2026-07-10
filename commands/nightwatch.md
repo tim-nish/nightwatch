@@ -221,6 +221,44 @@ deliberately. `gate.required` is true only on the very first run (`first_run: tr
   ungated orchestrator. From the second run onward `state.json` exists, so `gate.required` is false
   and there is no gate.
 
+**Confirmation-screen presentation (FR45–FR47).** Label every option in **plain language** — no
+internal jargon (never "strays"). The choices are:
+
+- **"Run Nightwatch now"** — the full night above.
+- **"Ignore untracked temporary files and run"** — offered only when the scope preview found
+  untracked files that would otherwise be analyzed. Get them, classified, from:
+  ```
+  node ${NW_ROOT}/scripts/first-run.js --repo .
+  ```
+  which returns two **independently-acceptable** groups (FR47) — `groups.temp` (likely
+  temporary/crash artifacts, safe to ignore) and `groups.documents` (ordinary untracked documents
+  the human should review) — plus `ignore_preview.temp` / `ignore_preview.all`. Show them grouped,
+  e.g.:
+  ```
+  Untracked files that would otherwise be analyzed:
+    Likely temporary / crash artifacts (safe to ignore):
+      bash.exe.stackdump
+    Untracked documents (review — you may want these analyzed):
+      answer.md   question.md
+  ```
+  The classification is a **name-pattern heuristic**, never a content judgment — the human decides.
+- **"Write STATE.md and config.yaml only — run /nightwatch later"** — the setup-only path: it writes
+  `.nightwatch/STATE.md` and `.nightwatch/config.yaml` and nothing else, and `/nightwatch` can be
+  run later. State this effect in the label so it is not an ambiguous escape hatch.
+
+**Preview any config change before writing it (FR46).** If a chosen option would edit
+`.nightwatch/config.yaml` (e.g. ignoring the untracked files above), show the **exact** block first —
+the `ignore_preview` string from `first-run.js`, e.g.:
+```yaml
+# will be added to .nightwatch/config.yaml
+ignore:
+  - answer.md
+  - question.md
+  - bash.exe.stackdump
+```
+The user confirms *this shown change*; **declining writes nothing**. `config.yaml` is a versioned
+declaration the user maintains — a helpful write is still a write.
+
 1. **Preconditions & idempotency.** Handled by the `abort` / `noop` statuses above. `orchestrate.js
    --plan` performs **no writes** — it only reads `.nightwatch/state.json` and config.
 
