@@ -16,6 +16,54 @@ function mkFindings(job, n, { kind, severity, verified = true, action = 'none' }
 }
 
 module.exports = {
+  // Story 8.1 / FR54 — a finding's `next_step` renders as an action line (summary + `~N min` +
+  // copy-pasteable command + invisible ids manifest); a finding WITHOUT one falls back to its
+  // title, with no blank section and no crash.
+  'brief: next_step renders an action line; a finding without one falls back to its title (FR54)': () => {
+    const r = tmpRepo();
+    const date = '2000-05-01';
+    writeFindings(r, 'repo-reconcile', date, [], [
+      { id: 'RC-patch', kind: 'drift', severity: 2, title: 'README documents a --tag flag the CLI lacks',
+        evidence: [{ path: 'README.md', line: 41 }], action: 'patch-available', verified: true,
+        next_step: { summary: 'Apply the README patch', command: 'git apply .nightwatch/out/x.patch', effort_min: 2 } },
+      { id: 'RC-plain', kind: 'drift', severity: 2, title: 'stale comment in cli.js', evidence: [], action: 'none', verified: true },
+    ]);
+    const res = collect(r, date);
+    assert.strictEqual(res.total, 2);
+    const brief = readFile(r, '.nightwatch/MORNING.md');
+    // next_step: summary (not title) is the bold action, effort + command render, id is in the manifest.
+    assert.ok(/- \[ \] \*\*Apply the README patch\*\* — ~2 min:.*<!-- ids: RC-patch -->/.test(brief), 'summary + effort + manifest');
+    assert.ok(/ {6}git apply \.nightwatch\/out\/x\.patch/.test(brief), 'command block rendered verbatim');
+    // fallback: no next_step → the title is the bold action, still with its manifest.
+    assert.ok(/- \[ \] \*\*stale comment in cli\.js\*\*.*<!-- ids: RC-plain -->/.test(brief), 'title fallback');
+    // the human-visible id appears only under Details, never on the checkbox line.
+    assert.ok(!/- \[ \].*`RC-patch`/.test(brief), 'no visible id on the action line');
+    assert.ok(/### Apply the README patch <a id="d-RC-patch">/.test(brief), 'Details anchor present');
+  },
+
+  // Story 8.1 / FR55 — the 30-second contract: the status line, the single First action, and the
+  // release position all land ABOVE the fold marker; evidence, ids, and degraded notices below it.
+  'brief: status, first action, and position render above the fold; evidence/ids/degraded below (FR55)': () => {
+    const r = tmpRepo();
+    const date = '2000-05-02';
+    write(r, 'RELEASE.md', '---\nphase: hardening\ntarget: "v0.1"\nprogress: 0.5\nupdated: 2000-05-02\n---\n# Release progress\n');
+    writeFindings(r, 'repo-reconcile', date, ['no STATE.md authority block'],
+      mkFindings('repo-reconcile', 2, { kind: 'drift', severity: 2 }));
+    collect(r, date);
+    const brief = readFile(r, '.nightwatch/MORNING.md');
+    const fold = brief.indexOf('*Everything below is supporting detail.');
+    assert.ok(fold > 0, 'fold marker present');
+    const above = brief.slice(0, fold), below = brief.slice(fold);
+    // Above the fold: status line, the one First action, the release position — in order.
+    const pos = ['**Quiet night.', '## ▶ First action', '## If you have energy after that', '## Where you stand'].map((h) => above.indexOf(h));
+    assert.ok(pos.every((i) => i >= 0), 'status + the three above-fold sections present above the fold');
+    for (let i = 1; i < pos.length; i++) assert.ok(pos[i] > pos[i - 1], `above-fold section ${i} in order`);
+    // Below the fold: Details, human-visible ids, and the degraded notice.
+    assert.ok(below.includes('## Details') && below.includes('`RE-drift0`'), 'evidence/ids below the fold');
+    assert.ok(below.includes('## Machine notes — nothing to act on') && /degraded — no STATE\.md/.test(below), 'degraded below the fold');
+    assert.ok(!above.includes('`RE-drift0`'), 'no human-visible id above the fold');
+  },
+
   // Regression (finding 0010): the release-progress line rendered a 0–1 fraction verbatim, so
   // 0.38 printed as "0.38%". The render boundary must convert the fraction to a percent → "38%".
   'brief: progress fraction 0.38 renders as 38%, never 0.38% (finding 0010)': () => {
@@ -24,7 +72,7 @@ module.exports = {
     write(r, 'RELEASE.md', '---\nphase: hardening\ntarget: "v0.1 public release"\nprogress: 0.38\nupdated: 2000-03-01\n---\n# Release progress\n');
     collect(r, date);
     const brief = readFile(r, '.nightwatch/MORNING.md');
-    assert.ok(/Progress: \*\*38%\*\*/.test(brief), `expected "38%" in the brief, got:\n${brief.split('\n').find((l) => l.includes('Progress'))}`);
+    assert.ok(/\*\*38%\*\* toward/.test(brief), `expected "38%" in the brief, got:\n${brief.split('\n').find((l) => l.includes('toward'))}`);
     assert.ok(!/0\.38%/.test(brief), 'must never print the raw fraction as a percent');
   },
 
@@ -42,8 +90,9 @@ module.exports = {
     assert.strictEqual(res.overflow, 35);
     const brief = readFile(r, '.nightwatch/MORNING.md');
     // 20 blockers (rank 0) + top 5 drift (rank 3) fill the cap; arch (rank 4) overflows.
-    assert.ok(/AR-arch/.test(brief.split('## Appendix')[1]), 'arch ids land in the appendix');
-    assert.ok(!/AR-arch0\b/.test(brief.split('## Appendix')[0]), 'no arch shown above cap');
+    const APPENDIX = '**Appendix (overflow — ids only):**';
+    assert.ok(/AR-arch/.test(brief.split(APPENDIX)[1]), 'arch ids land in the appendix');
+    assert.ok(!/AR-arch0\b/.test(brief.split(APPENDIX)[0]), 'no arch shown above cap');
   },
 
   'brief: only verified (or setup) findings enter the brief': () => {
@@ -66,7 +115,7 @@ module.exports = {
     assert.strictEqual(res.total, 0);
     const brief = readFile(r, '.nightwatch/MORNING.md');
     assert.ok(/No RELEASE\.md yet/.test(brief));
-    assert.ok(/0 findings/.test(brief));
+    assert.ok(/Total findings: 0/.test(brief));
   },
 
   'brief: idempotent ledger — second same-date run does not double-append': () => {
@@ -91,18 +140,18 @@ module.exports = {
     collect(r, date);
     const brief = readFile(r, '.nightwatch/MORNING.md');
     const order = [
-      '## Release progress',
-      '## Human decisions required',
-      '## Consistency (repo-reconcile)',
-      '## Architecture (arch-review)',
-      '## Failures & degraded notices',
-      '## Appendix',
+      '## ▶ First action',
+      '## If you have energy after that',
+      '## Where you stand',
+      '## Details',
+      '**Appendix (overflow — ids only):**',
+      '## Machine notes — nothing to act on',
     ].map((h) => brief.indexOf(h));
     assert.ok(order.every((i) => i >= 0), 'every section present');
     for (let i = 1; i < order.length; i++) assert.ok(order[i] > order[i - 1], `section ${i} follows ${i - 1}`);
   },
 
-  // AC1 — the failures section must name the extractor adapters that ran / were skipped / crashed.
+  // AC1 — the machine-notes section must name the extractor adapters that ran / were skipped / crashed.
   'brief: degraded notices name the extractor adapters': () => {
     const r = tmpRepo();
     const date = '2000-03-02';
@@ -110,7 +159,7 @@ module.exports = {
     writeFindings(r, 'arch-review', date, ['python-importlinter: adapter crashed — dropped'], []);
     collect(r, date);
     const brief = readFile(r, '.nightwatch/MORNING.md');
-    const fail = brief.split('## Failures & degraded notices')[1].split('## Appendix')[0];
+    const fail = brief.split('## Machine notes — nothing to act on')[1];
     assert.ok(/node-depcruise: detect\(\) failed .* — skipped/.test(fail), 'skipped adapter named');
     assert.ok(/python-importlinter: adapter crashed — dropped/.test(fail), 'crashed adapter named');
   },
@@ -137,7 +186,7 @@ module.exports = {
     assert.strictEqual(res.overflow, 35);
 
     const brief = readFile(r, '.nightwatch/MORNING.md');
-    const [body, appendix] = brief.split('## Appendix');
+    const [body, appendix] = brief.split('**Appendix (overflow — ids only):**');
     // Shown by interleave: 10 blockers + 10 human decisions + top 5 drift = 25.
     for (let i = 0; i < 10; i++) assert.ok(body.includes(`RE-blocker${i}`), `blocker${i} shown`);
     for (let i = 0; i < 5; i++) assert.ok(body.includes(`RE-decision${i}`) && body.includes(`AR-decision${i}`), 'decisions merged across jobs, shown');
@@ -210,14 +259,11 @@ module.exports = {
     runScript('collect-brief.js', r, { date });
     const brief = readFile(r, '.nightwatch/MORNING.md');
 
-    // The surviving job's section is fully rendered with its findings.
-    assert.ok(/## Architecture \(arch-review\)/.test(brief), 'arch section present');
+    // The surviving job's findings are fully rendered despite the crash.
     assert.ok(/AR-arch0/.test(brief) && /AR-arch1/.test(brief), 'arch findings shown');
-    // The crashed member did NOT take out the reconcile section (it renders "0 findings").
-    assert.ok(/## Consistency \(repo-reconcile\)/.test(brief), 'reconcile section still present');
 
-    // Exactly one failure line for the crashed member, carrying its status + note.
-    const fail = brief.split('## Failures & degraded notices')[1].split('## Appendix')[0];
+    // Exactly one failure line for the crashed member, in machine notes, carrying its status + note.
+    const fail = brief.split('## Machine notes — nothing to act on')[1];
     const crashLines = fail.split('\n').filter((l) => /repo-reconcile/.test(l));
     assert.strictEqual(crashLines.length, 1, 'crashed member is exactly one line');
     assert.ok(/repo-reconcile: \*\*crashed\*\* — subagent exited non-zero/.test(fail), 'status + note rendered');
@@ -238,7 +284,7 @@ module.exports = {
     assert.strictEqual(res.total, 1, 'the surviving job\'s finding is in the brief');
     const brief = readFile(r, '.nightwatch/MORNING.md');
     assert.ok(/RE-drift0/.test(brief), 'reconcile finding shown despite arch timeout');
-    const fail = brief.split('## Failures & degraded notices')[1].split('## Appendix')[0];
+    const fail = brief.split('## Machine notes — nothing to act on')[1];
     const toLines = fail.split('\n').filter((l) => /arch-review/.test(l));
     assert.strictEqual(toLines.length, 1, 'timeout is exactly one line');
     assert.ok(/arch-review: \*\*timeout\*\* — killed at timeout_minutes=15/.test(fail), 'kill noted');

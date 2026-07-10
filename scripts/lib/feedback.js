@@ -9,21 +9,27 @@
 const path = require('path');
 const { nwDir, readFileSafe } = require('./util');
 
-// Recognised checkbox states in a rendered brief item. `[x]`/`[X]` = acted-on; `[-]`/`[~]` =
-// dismissed. The finding id is the backtick-wrapped token collect-brief renders right after the
-// box (renderItem: `- [ ] \`${id}\` (sev…) …`), so identity survives freeform edits to the text.
-const MARK_RE = /^\s*- \[([xX~-])\]\s+`([^`]+)`/;
+// Recognised checkbox states in a rendered brief action line. `[x]`/`[X]` = acted-on; `[-]`/`[~]`
+// = dismissed. The finding id(s) an action line stands for are carried in an invisible manifest
+// comment on the same line — `<!-- ids: RC-0031 -->` (collect-brief renderActionLine) — so identity
+// survives freeform edits to the visible text and the reader never meets the raw id (spec §6, FR58).
+// One id per line in Story 8.1; a comma-separated list once bundling lands (Story 8.3).
+const MARK_RE = /^\s*- \[([xX~-])\]/;
+const IDS_RE = /<!--\s*ids:\s*([^>]*?)\s*-->/;
 const VERDICT = { x: 'acted-on', '~': 'dismissed', '-': 'dismissed' };
 
 /** The brief header stamps the date whose findings these checkboxes refer to. */
 function briefDate(text) {
-  const m = (text || '').match(/morning brief \((\d{4}-\d{2}-\d{2})\)/);
+  const m = (text || '').match(/^# Nightwatch — (\d{4}-\d{2}-\d{2})/m)
+    || (text || '').match(/morning brief \((\d{4}-\d{2}-\d{2})\)/);
   return m ? m[1] : '';
 }
 
 /**
- * Parse a rendered brief for checked / dismissed items → `[{id, verdict, date}]`, deduped by id
- * (first mark for an id wins). `date` is the brief's own date. Exposed for tests.
+ * Parse a rendered brief for checked / dismissed action lines → `[{id, verdict, date}]`, deduped
+ * by id (first mark for an id wins). A marked line's ids come from its `<!-- ids: … -->` manifest,
+ * so marking one bundled action fans out to a row per covered id. `date` is the brief's own date.
+ * Exposed for tests.
  * @param {string} text
  * @returns {Array<{id:string, verdict:string, date:string}>}
  */
@@ -34,10 +40,14 @@ function parseMarks(text) {
   for (const line of (text || '').split('\n')) {
     const m = line.match(MARK_RE);
     if (!m) continue;
-    const id = m[2];
-    if (seen.has(id)) continue;
-    seen.add(id);
-    marks.push({ id, verdict: VERDICT[m[1].toLowerCase()], date });
+    const idm = line.match(IDS_RE);
+    if (!idm) continue;
+    const verdict = VERDICT[m[1].toLowerCase()];
+    for (const id of idm[1].split(',').map((s) => s.trim()).filter(Boolean)) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      marks.push({ id, verdict, date });
+    }
   }
   return marks;
 }

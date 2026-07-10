@@ -106,7 +106,7 @@ module.exports = {
     write(root, '.claude/c.md', 'x\n');
     collect(root, '2026-07-10');
     const brief = require('fs').readFileSync(root + '/.nightwatch/MORNING.md', 'utf8');
-    const scopeLines = brief.split('\n').filter((l) => l.startsWith('Scope:'));
+    const scopeLines = brief.split('\n').filter((l) => /Scope: excluded/.test(l));
     assert.strictEqual(scopeLines.length, 1, 'exactly one scope line');
     assert.ok(/\.claude/.test(scopeLines[0]) && /_bmad/.test(scopeLines[0]), 'names the excluded trees');
     assert.ok(/config\.yaml/.test(scopeLines[0]), 'points at the config knob');

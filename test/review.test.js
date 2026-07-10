@@ -16,11 +16,13 @@ const { collect } = require('../scripts/collect-brief');
 const SCRIPTS = path.resolve(__dirname, '..', 'scripts');
 const DATE = '2026-07-09';
 
+// Hand-built in the NEW composition: each finding is an action line whose id lives only in the
+// invisible `<!-- ids: <id> -->` manifest (never in the visible text), matching renderActionLine.
 function brief(ids) {
   return [
-    `# Nightwatch — morning brief (${DATE})`, '',
-    '## Consistency (repo-reconcile)',
-    ...ids.map((id) => `- [ ] \`${id}\` (sev2) title ${id}`),
+    `# Nightwatch — ${DATE}`, '',
+    '## Details',
+    ...ids.map((id) => `- [ ] **title ${id}** → [details](#d-${id}) <!-- ids: ${id} -->`),
     '', '---', '_Review interactively with `/nightwatch review` — or mark boxes by hand._', '',
   ].join('\n');
 }
@@ -55,10 +57,10 @@ module.exports = {
     const text = brief(['rc-1', 'rc-2']);
     const { text: out, changed } = rewriteCheckbox(text, 'rc-1', 'dismissed');
     assert.ok(changed);
-    assert.ok(out.includes('- [-] `rc-1`'), 'rc-1 dismissed');
-    assert.ok(out.includes('- [ ] `rc-2`'), 'rc-2 untouched');
+    assert.ok(/- \[-\].*<!-- ids: rc-1 -->/.test(out), 'rc-1 dismissed');
+    assert.ok(/- \[ \].*<!-- ids: rc-2 -->/.test(out), 'rc-2 untouched');
     // everything except the one box char is identical
-    assert.strictEqual(out.replace('- [-] `rc-1`', '- [ ] `rc-1`'), text, 'byte-preserved except the target box');
+    assert.strictEqual(out.replace('- [-]', '- [ ]'), text, 'byte-preserved except the target box');
     assert.strictEqual(rewriteCheckbox(text, 'nope', 'acted-on').changed, false, 'absent id → no change');
   },
 
@@ -69,8 +71,8 @@ module.exports = {
     const res = applyReview(root, 'rc-1', 'acted-on', store);
     assert.strictEqual(res.status, 'recorded');
     assert.deepStrictEqual(res, { status: 'recorded', id: 'rc-1', verdict: 'acted-on', date: DATE });
-    assert.ok(readFile(root, '.nightwatch/MORNING.md').includes('- [x] `rc-1`'), 'MORNING.md checkbox set');
-    assert.ok(readFile(root, `.nightwatch/briefs/${DATE}.md`).includes('- [x] `rc-1`'), 'dated brief checkbox set');
+    assert.ok(/- \[x\].*<!-- ids: rc-1 -->/.test(readFile(root, '.nightwatch/MORNING.md')), 'MORNING.md checkbox set');
+    assert.ok(/- \[x\].*<!-- ids: rc-1 -->/.test(readFile(root, `.nightwatch/briefs/${DATE}.md`)), 'dated brief checkbox set');
     assert.strictEqual(store.rows.length, 1, 'exactly one feedback row');
     assert.deepStrictEqual(store.rows[0], { type: 'feedback', id: 'rc-1', verdict: 'acted-on', date: DATE });
   },
@@ -106,7 +108,7 @@ module.exports = {
     const root = tmpRepo();
     gitInit(root);
     // Human hand-marked rc-2 acted-on before any review.
-    const text = brief(['rc-1', 'rc-2']).replace('- [ ] `rc-2`', '- [x] `rc-2`');
+    const text = brief(['rc-1', 'rc-2']).replace('- [ ] **title rc-2**', '- [x] **title rc-2**');
     write(root, '.nightwatch/MORNING.md', text);
     write(root, `.nightwatch/briefs/${DATE}.md`, text);
     commit(root, 'init');
@@ -126,7 +128,7 @@ module.exports = {
 
     const rec = JSON.parse(execFileSync('node', [path.join(SCRIPTS, 'review-feedback.js'), '--repo', root, '--id', 'rc-2', '--mark', 'dismissed'], { encoding: 'utf8' }));
     assert.strictEqual(rec.status, 'recorded');
-    assert.ok(readFile(root, '.nightwatch/MORNING.md').includes('- [-] `rc-2`'), 'CLI rewrote the checkbox');
+    assert.ok(/- \[-\].*<!-- ids: rc-2 -->/.test(readFile(root, '.nightwatch/MORNING.md')), 'CLI rewrote the checkbox');
   },
 
   // ---- the brief footer names BOTH feedback methods -----------------------------------------

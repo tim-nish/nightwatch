@@ -50,8 +50,8 @@ module.exports = {
     commit(r, 'repo');
     collect(r, '2026-07-10');
     const brief = readFile(r, '.nightwatch/MORNING.md');
-    const section = brief.split('## Config drift')[1].split('\n## ')[0];
-    const lines = section.split('\n').filter((l) => l.startsWith('- '));
+    const section = brief.split('## Machine notes — nothing to act on')[1];
+    const lines = section.split('\n').filter((l) => /new top-level directory/.test(l));
     assert.strictEqual(lines.length, 1, 'exactly one drift line');
     assert.match(lines[0], /new top-level directory `services\/` is unclassified; run `\/nightwatch init --update`/);
     assert.ok(!/`src\//.test(section), 'allowlisted product dir is not nudged');
@@ -65,8 +65,8 @@ module.exports = {
     commit(r, 'repo');
     collect(r, '2026-07-10');
     const brief = readFile(r, '.nightwatch/MORNING.md');
-    const section = brief.split('## Config drift')[1].split('\n## ')[0];
-    assert.ok(/^- none$/m.test(section), 'no directory is named — just the empty marker');
+    const section = brief.split('## Machine notes — nothing to act on')[1];
+    assert.ok(!/new top-level directory/.test(section), 'no directory is named');
     assert.ok(!/unclassified/.test(section), 'no drift line emitted');
   },
 
@@ -80,8 +80,8 @@ module.exports = {
       commit(r, 'repo');
       collect(r, '2026-07-10');
       const brief = readFile(r, '.nightwatch/MORNING.md');
-      return brief.split('## Config drift')[1].split('\n## ')[0];
+      return brief.split('\n').filter((l) => /new top-level directory/.test(l)).join('\n');
     };
-    assert.strictEqual(mk(), mk(), 'drift section byte-identical across identical repos');
+    assert.strictEqual(mk(), mk(), 'drift lines byte-identical across identical repos');
   },
 };
