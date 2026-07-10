@@ -6,18 +6,7 @@ updated: 1970-01-01
 ---
 # Release progress
 
-## Status update (latest first, capped at 10 entries)
-- 1970-01-01 — tracker initialized from template
-
-## Phase
-_Mirrors STATE.md `phase`._
-
-## Done
-<!-- completed work, each item with evidence link -->
-
-## Remaining — implementation
-
-## Remaining — documentation
+## Next actions (top 3)
 
 ## Release blockers
 <!-- severity-1 findings, cross-referenced by finding id; clear automatically when the source clears -->
@@ -25,9 +14,20 @@ _Mirrors STATE.md `phase`._
 ## Human decisions needed
 <!-- human-decision findings, cross-referenced by finding id -->
 
+## Remaining — implementation
+
+## Remaining — documentation
+
 ## Nice to have
 
-## Next actions (top 3)
+## Done
+<!-- completed work, each item with evidence link -->
+
+## Status update (latest first, capped at 10 entries)
+- 1970-01-01 — tracker initialized from template
+
+## Phase
+_Mirrors STATE.md `phase`._
 
 ## Notes (human-owned — never machine-edited)
 <!-- Anything below this heading is byte-preserved by Nightwatch. Write freely. -->

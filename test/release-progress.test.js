@@ -192,7 +192,10 @@ module.exports = {
     // Hand-add the human blocker into the same section after night 1.
     doc = doc.replace('## Release blockers\n', `## Release blockers\n${humanBlocker}\n`);
     write(r, '.nightwatch/RELEASE.md', doc);
-    const promotedId = nwIdOf(doc, 'Quickstart command errors');
+    // Read the promoted blocker's id from the Release blockers section specifically: in the canonical
+    // reader-side order (FR63) the Next actions section leads and echoes the blocker's title, so a
+    // whole-doc scan would pick up the next-action slot's id instead of the blocker's.
+    const promotedId = nwIdOf(section(doc, 'Release blockers'), 'Quickstart command errors');
     assert.ok(promotedId, 'promoted blocker has an id');
     const blockers1 = section(doc, 'Release blockers');
     assert.match(blockers1, /- \[ \] Quickstart command errors \(RC-b10c1a\)/, 'open under Release blockers night 1');

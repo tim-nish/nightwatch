@@ -149,15 +149,46 @@ function deriveStatusLine(shown, runStatus) {
   return `**Quiet night.** Nothing needs you today.${failSuffix}`;
 }
 
-// The "Where you stand" release-position block (spec §6): the progress toward the target and a
-// pointer to the tracker — never the tracker's full status-entry text, so MORNING.md and RELEASE.md
-// no longer duplicate it. (Ratio + remaining-criterion titles: Story 8.4.)
-function renderWhereYouStand(rel, lines) {
-  if (rel && rel.fm && rel.fm.progress != null) {
-    lines.push(`- **${progressPercent(rel.fm.progress)}%** toward ${rel.fm.target || 'release'} (phase: ${rel.fm.phase || 'unset'}). Full tracker: \`.nightwatch/RELEASE.md\`.`);
-  } else {
+// The "Where you stand" release-position block (spec §6, brief-composition P6): the progress toward
+// the target, the doneCount/total ratio it is derived from (release-progress-display P1), the titles
+// of the remaining open criteria, and a pointer to the tracker — never the tracker's full
+// status-entry text, so MORNING.md and RELEASE.md no longer duplicate it (Story 8.4 / FR61).
+// `ratio` is `{ done, total, remainingTitles }` counted from the tracker store (see collect()).
+function renderWhereYouStand(rel, ratio, lines) {
+  if (!(rel && rel.fm && rel.fm.progress != null)) {
     lines.push('- No RELEASE.md yet — run `/release-progress` (or `/nightwatch`) to create it.');
+    return;
   }
+  const target = rel.fm.target || 'release';
+  const phase = rel.fm.phase || 'unset';
+  // Show the ratio only when something is tracked; a zero denominator keeps the coarse percentage
+  // messaging and never renders "0/0" (release-progress-display AC3).
+  const hasRatio = ratio && ratio.total > 0;
+  const ratioText = hasRatio ? ` (${ratio.done}/${ratio.total} criteria)` : '';
+  lines.push(`- **${progressPercent(rel.fm.progress)}%**${ratioText} toward ${target} (phase: ${phase}). Full tracker: \`.nightwatch/RELEASE.md\`.`);
+  if (hasRatio && ratio.remainingTitles.length) {
+    lines.push(`- Remaining: ${ratio.remainingTitles.join('; ')}.`);
+  }
+}
+
+const TRACKED_SECTIONS = ['implementation', 'documentation', 'blockers'];
+const STALE_TAG = '(stale? — confirm)';
+// The number of remaining-criterion titles the "Where you stand" block lists (a short, deterministic
+// preview — the full list lives in the tracker).
+const REMAINING_TITLE_CAP = 3;
+
+// Count the doneCount/total ratio the release percentage is derived from, straight off the tracker
+// store collect() already opened — the same tracked set release-progress.js computes `progress` over
+// (definition-of-done items + blockers, excluding stale). Open-item titles feed the remaining preview;
+// a rendered `— evidence: …` tail is stripped so the reader sees the criterion, not the pointer.
+function releaseRatio(store) {
+  const tracked = store.listItems().filter((it) => TRACKED_SECTIONS.includes(it.section) && !it.title.includes(STALE_TAG));
+  const done = tracked.filter((it) => it.status === 'done').length;
+  const remainingTitles = tracked
+    .filter((it) => it.status === 'open')
+    .map((it) => it.title.replace(/\s+—\s+evidence:.*$/, ''))
+    .slice(0, REMAINING_TITLE_CAP);
+  return { done, total: tracked.length, remainingTitles };
 }
 
 // Demotion (spec principle 3): a member job with zero acted-on findings for the two most
@@ -236,10 +267,13 @@ function collect(root, date, { force = false } = {}) {
   if (rest.length) for (const g of rest) renderActionLine(g, L); else L.push('- Nothing else right now.');
   L.push('');
 
-  // Where you stand — release position, then a pointer to the tracker (never its status-entry text).
+  // Where you stand — release position + the doneCount/total ratio it came from + the remaining
+  // criterion titles, then a pointer to the tracker (never its status-entry text). The ratio is
+  // counted from the already-open store, so no second read of RELEASE.md and no new judgment.
   const rel = readReleaseHeader(root, config);
+  const ratio = releaseRatio(store);
   L.push('## Where you stand');
-  renderWhereYouStand(rel, L);
+  renderWhereYouStand(rel, ratio, L);
   L.push('');
 
   // ---- Fold: everything below is supporting detail. ----

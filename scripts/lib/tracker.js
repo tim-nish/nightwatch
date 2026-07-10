@@ -121,7 +121,13 @@ function setFrontmatterField(head, key, value) {
 /** Double-quote a string as a YAML scalar (safe for em dashes, backticks, colons). */
 function yamlQuote(s) { return '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'; }
 
+// Trailing-id form (canonical, FR63/§P3): `- [ ] <title> — evidence: … <!-- nw:IT-xxxxxx -->`.
+// The id trails the line inside an HTML comment so the reader meets the action, not the code (0017),
+// while identity survives a human editing the visible text.
 const ITEM_RE = /^- \[([ xX])\] (.*?)(?:\s*<!-- nw:(IT-[0-9a-f]{6}) -->)?\s*$/;
+// Legacy leading-id form: `- [ ] IT-xxxxxx — <title>`. Accepted on READ so a pre-reorder file still
+// parses to the same {id,title,done}; the writer only ever emits the trailing form above (FR63).
+const ITEM_LEADING_RE = /^- \[([ xX])\] (IT-[0-9a-f]{6}) — (.*?)\s*$/;
 
 /** Parse item checklist lines out of a section body; non-item lines are section preamble. */
 function parseItems(bodyRaw) {
@@ -129,6 +135,13 @@ function parseItems(bodyRaw) {
   const preamble = [];
   let seenItem = false;
   for (const line of bodyRaw.split('\n')) {
+    // Legacy leading-id form first (its id token would otherwise read as part of the title).
+    const lead = line.match(ITEM_LEADING_RE);
+    if (lead) {
+      seenItem = true;
+      items.push({ id: lead[2], title: lead[3].trim(), done: lead[1].toLowerCase() === 'x', raw: line });
+      continue;
+    }
     const m = line.match(ITEM_RE);
     if (m && m[3]) {
       seenItem = true;
@@ -141,6 +154,8 @@ function parseItems(bodyRaw) {
   return { preamble, items };
 }
 
+// Machine-rendered item: the id TRAILS the line (FR63). Human items carry their own `raw` and are
+// emitted verbatim — their id placement is whatever the human wrote (never rewritten here).
 function renderItem(it) {
   const box = it.status === 'done' ? 'x' : ' ';
   const ev = evToString(it.evidence);
@@ -294,8 +309,36 @@ function seedFromRelease(model) {
   return { items, status };
 }
 
+// Reader-side canonical section order (output-file-taxonomy §P3): what to do first, history last.
+// Whenever the document is rewritten (dirty), sections are re-emitted in THIS order regardless of the
+// order they were read in. Sections not named here (any human-added extra) keep their relative input
+// order after the known sections; Notes is always last and byte-preserved.
+const CANONICAL_ORDER = [
+  HEADING_BY_SECTION.next,           // Next actions (top 3)
+  HEADING_BY_SECTION.blockers,       // Release blockers
+  HEADING_BY_SECTION.decisions,      // Human decisions needed
+  HEADING_BY_SECTION.implementation, // Remaining — implementation
+  HEADING_BY_SECTION.documentation,  // Remaining — documentation
+  HEADING_BY_SECTION.nice,           // Nice to have
+  'Done',
+  'Status update',
+  'Phase',
+];
+
+/** Rank a heading in the canonical reader-side order (lower = earlier). Notes always sorts last. */
+function canonicalRank(heading) {
+  const h = heading.replace(/^##\s+/, '');
+  if (/^Notes\b/.test(h)) return CANONICAL_ORDER.length + 1;
+  for (let i = 0; i < CANONICAL_ORDER.length; i++) {
+    if (h === CANONICAL_ORDER[i] || h.startsWith(CANONICAL_ORDER[i])) return i;
+  }
+  return CANONICAL_ORDER.length; // unknown/extra: after the known sections, before Notes
+}
+
 function renderRelease(model, core) {
-  // Untouched document → return original bytes (guarantees byte-identical round-trip, FR16).
+  // Untouched document → return original bytes (guarantees byte-identical round-trip, FR16). Canonical
+  // reordering happens ONLY when the document is actually rewritten (a legacy-order file re-serializes
+  // into the new order the first time something dirties it).
   if (!core.dirty) return model.raw;
 
   const doneItems = core.order.map((id) => core.items.get(id)).filter((it) => it && it.status === 'done');
@@ -308,26 +351,21 @@ function renderRelease(model, core) {
 
   const renderLine = (it) => (it.raw != null ? it.raw : renderItem(it));
 
-  const out = [];
-  out.push(model.head.replace(/\n$/, ''));
-  for (const sec of model.sections) {
+  // Serialize one input section into its block. Byte-equivalent to the strings the previous in-order
+  // renderer emitted per section, so joining blocks with '\n' reproduces the same bytes — only the
+  // ORDER of the blocks changes (to the canonical reader-side order via canonicalRank below).
+  const blockFor = (sec) => {
     // Notes is human-owned — always byte-preserved.
-    if (/^## Notes/.test(sec.heading)) { out.push(sec.heading); out.push(sec.bodyRaw.replace(/\n$/, '')); continue; }
-
+    if (/^## Notes/.test(sec.heading)) return [sec.heading, sec.bodyRaw.replace(/\n$/, '')].join('\n');
     if (/^## Status update/.test(sec.heading)) {
-      out.push(sec.heading);
       const lines = core.statusLines.map((s) => `- ${s.date} — ${s.text}`);
-      out.push(lines.join('\n'));
-      out.push('');
-      continue;
+      return [sec.heading, lines.join('\n'), ''].join('\n');
     }
-
     const isDone = /^## Done/.test(sec.heading);
     let section = null;
     for (const s of SECTIONS) if (sec.heading === `## ${HEADING_BY_SECTION[s]}`) section = s;
-
-    if (!isDone && !section) { out.push(sec.heading); out.push(sec.bodyRaw.replace(/\n$/, '')); continue; }
-
+    // Unknown/extra section or Phase → byte-preserve the body as-is.
+    if (!isDone && !section) return [sec.heading, sec.bodyRaw.replace(/\n$/, '')].join('\n');
     const { preamble } = parseItems(sec.bodyRaw);
     const listItems = isDone ? doneItems : openBySection[section];
     const chunk = [sec.heading];
@@ -335,8 +373,16 @@ function renderRelease(model, core) {
     if (pre) chunk.push(pre);
     for (const it of listItems) chunk.push(renderLine(it));
     chunk.push('');
-    out.push(chunk.join('\n'));
-  }
+    return chunk.join('\n');
+  };
+
+  // Head first, then every input section re-sorted into canonical order (stable on input index, so
+  // unknown/extra sections and any duplicate headings keep their relative order deterministically).
+  const ordered = model.sections
+    .map((sec, i) => ({ sec, i, rank: canonicalRank(sec.heading) }))
+    .sort((a, b) => a.rank - b.rank || a.i - b.i);
+  const out = [model.head.replace(/\n$/, '')];
+  for (const o of ordered) out.push(blockFor(o.sec));
   let text = out.join('\n');
   if (!text.endsWith('\n')) text += '\n';
   return text;

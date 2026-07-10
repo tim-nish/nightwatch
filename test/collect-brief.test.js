@@ -141,6 +141,66 @@ module.exports = {
     assert.ok(!/0\.38%/.test(brief), 'must never print the raw fraction as a percent');
   },
 
+  // Story 8.4 / FR61 — "Where you stand" shows the percentage AND the doneCount/total ratio it is
+  // derived from, plus the titles of the remaining open criteria and the tracker pointer; it must NOT
+  // embed the tracker's dated status-entry text. Deterministic across two runs.
+  'brief: "Where you stand" shows pct + done/total ratio + remaining titles + tracker pointer, no status-entry text (FR61)': () => {
+    const r = tmpRepo();
+    const date = '2000-09-02';
+    // A RELEASE.md with 2 of 3 tracked criteria done → 67%, and a dated status entry that must NOT leak.
+    write(r, '.nightwatch/RELEASE.md', [
+      '---', 'phase: hardening', 'target: "v0.1 public release"', 'progress: 0.67', 'updated: 2000-09-01', '---',
+      '# Release progress', '',
+      '## Next actions (top 3)', '',
+      '## Release blockers', '',
+      '## Human decisions needed', '',
+      '## Remaining — implementation', '- [ ] CI runs the test suite <!-- nw:IT-111111 -->', '',
+      '## Remaining — documentation', '',
+      '## Nice to have', '',
+      '## Done',
+      '- [x] Ship a LICENSE file — evidence: LICENSE <!-- nw:IT-222222 -->',
+      '- [x] Maintain a CHANGELOG — evidence: CHANGELOG.md <!-- nw:IT-333333 -->', '',
+      '## Status update (latest first, capped at 10 entries)',
+      '- 2000-09-01 — completed: Ship a LICENSE file (evidence: LICENSE)', '',
+      '## Phase', '_Mirrors STATE.md `phase`._', '',
+      '## Notes (human-owned — never machine-edited)', '',
+    ].join('\n'));
+    collect(r, date);
+    const brief = readFile(r, '.nightwatch/MORNING.md');
+    const stand = brief.split('## Where you stand')[1].split('\n---')[0];
+    assert.match(stand, /\*\*67%\*\* \(2\/3 criteria\) toward v0\.1 public release \(phase: hardening\)/, 'pct + ratio + target + phase');
+    assert.match(stand, /Full tracker: `\.nightwatch\/RELEASE\.md`/, 'tracker pointer present');
+    assert.match(stand, /Remaining: CI runs the test suite\./, 'remaining open criterion title listed');
+    // The tracker's dated status-entry text must not be duplicated into the brief (8.1 removed it).
+    assert.ok(!/completed: Ship a LICENSE file/.test(brief), 'no tracker status-entry text embedded');
+    // Byte-deterministic across two runs.
+    collect(r, date);
+    assert.strictEqual(readFile(r, '.nightwatch/MORNING.md'), brief, 'byte-identical across runs');
+  },
+
+  // Story 8.4 / FR61 — a zero-denominator repo (nothing tracked) shows the coarse percentage with the
+  // generic messaging, never "0/0" and never a Remaining line.
+  'brief: zero-denominator "Where you stand" shows generic messaging, never 0/0 (FR61)': () => {
+    const r = tmpRepo();
+    const date = '2000-09-03';
+    // Frontmatter progress but no tracked items at all.
+    write(r, '.nightwatch/RELEASE.md', [
+      '---', 'phase: prototype', 'target: "v0.1"', 'progress: 0.5', 'updated: 2000-09-03', '---',
+      '# Release progress', '',
+      '## Next actions (top 3)', '',
+      '## Remaining — implementation', '',
+      '## Done', '',
+      '## Notes (human-owned — never machine-edited)', '',
+    ].join('\n'));
+    collect(r, date);
+    const brief = readFile(r, '.nightwatch/MORNING.md');
+    const stand = brief.split('## Where you stand')[1].split('\n---')[0];
+    assert.match(stand, /\*\*50%\*\* toward v0\.1/, 'coarse percentage still shown');
+    assert.ok(!/criteria\)/.test(stand), 'no ratio rendered when nothing is tracked');
+    assert.ok(!/0\/0/.test(brief), 'never renders 0/0');
+    assert.ok(!/Remaining:/.test(stand), 'no remaining line when nothing is tracked');
+  },
+
   // Story 8.3 / FR59 — findings whose next_step.command is byte-identical bundle into ONE action
   // line whose manifest lists every id and whose summary shows the count; the cap still counts the
   // underlying findings, and each finding keeps its own Details block.
