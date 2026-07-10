@@ -40,8 +40,9 @@ writing, the adapter probe, and the template instantiation are **deterministic**
 to `${NW_ROOT}/scripts/init.js` so setup is reproducible and never improvised.
 
 1. **Precondition.** Verify this is a git checkout (`init.js` aborts with `not-a-git-checkout`
-   otherwise). `init.js` also detects whether `STATE.md` / `.nightwatch/config.yaml` already exist
-   — it will **never clobber** an existing declaration, so this mode is safe to re-run.
+   otherwise). `init.js` also detects whether `.nightwatch/STATE.md` / `.nightwatch/config.yaml`
+   already exist (a legacy root `STATE.md` counts as present too) — it will **never clobber** an
+   existing declaration, so this mode is safe to re-run.
 
 2. **Probe the extractor adapters** (read-only, writes nothing):
    ```
@@ -66,19 +67,32 @@ to `${NW_ROOT}/scripts/init.js` so setup is reproducible and never improvised.
    but is not the product." Only the confirmed set is written (next step); this is a **visible,
    versioned declaration**, never a hidden default.
 
-5. **Write the declarations from templates.** Run:
+5. **Offer the one-time layout migration** (only if legacy root artifacts exist). Detect first
+   (read-only, writes nothing):
    ```
-   node ${NW_ROOT}/scripts/init.js --repo . --dev-tooling "dir1,dir2/**"
+   node ${NW_ROOT}/scripts/init.js --repo . --detect-migration
    ```
-   This instantiates `STATE.md` from `${NW_ROOT}/templates/STATE.md` and
-   `.nightwatch/config.yaml` from `${NW_ROOT}/templates/config.yaml` **only where absent** (an
-   existing declaration is preserved byte-for-byte), adds `.nightwatch/out/` to the repo's
-   `.gitignore`, and persists the human-confirmed `--dev-tooling` set into config.yaml's
-   `dev_tooling:` (extends the shipped defaults). Omit `--dev-tooling` if nothing was confirmed;
-   pass `--no-config` to write `STATE.md` only. Then help the human fill the freshly written
-   declarations from the interview answers (authority, phase, release, layers).
+   This prints the legacy root files (`STATE.md`, `RELEASE.md`) that would move into `.nightwatch/`
+   with each `{ from, to, tracked }`. If `moves` is non-empty, show them and ask the human to
+   confirm the relocation — it is byte-for-byte and uses `git mv` for tracked files so history
+   follows. On confirmation, pass `--migrate` to the write step; on decline, skip it and every read
+   still succeeds via the backward-compatible fallback. Nothing moves without confirmation.
 
-6. **Present the plan and initial validation run.** Run the overnight flow below with `--force` (a first-run
+6. **Write the declarations from templates.** Run (add `--migrate` only if the human confirmed
+   step 5):
+   ```
+   node ${NW_ROOT}/scripts/init.js --repo . --dev-tooling "dir1,dir2/**" [--migrate]
+   ```
+   This relocates any confirmed legacy artifacts first, then instantiates `.nightwatch/STATE.md`
+   from `${NW_ROOT}/templates/STATE.md` and `.nightwatch/config.yaml` from
+   `${NW_ROOT}/templates/config.yaml` **only where absent** (an existing declaration is preserved
+   byte-for-byte), writes a nested `.nightwatch/.gitignore` ignoring `out/` **without touching the
+   project's root `.gitignore`**, and persists the human-confirmed `--dev-tooling` set into
+   config.yaml's `dev_tooling:` (extends the shipped defaults). Omit `--dev-tooling` if nothing was
+   confirmed; pass `--no-config` to write `STATE.md` only. Then help the human fill the freshly
+   written declarations from the interview answers (authority, phase, release, layers).
+
+7. **Present the plan and initial validation run.** Run the overnight flow below with `--force` (a first-run
    scheduler call reports `gate.required`). Show the plan, estimate, and scope preview — this is
    where the human first sees the confirmed scope take effect and pays the first full budget — ask
    the first-run confirmation, then run each job once and show the first brief. Stop and let the

@@ -31,7 +31,10 @@ const PRODUCT_DIR_ALLOWLIST = new Set([
 const SRC_EXT = /\.(js|mjs|cjs|ts|tsx|jsx|py|go|rs|rb|java)$/;
 
 const TEMPLATES_DIR = path.join(__dirname, '..', '..', 'templates');
-const OUT_IGNORE = '.nightwatch/out/';
+// The transient per-run artifact dir is ignored via a NESTED .nightwatch/.gitignore (git honors
+// nested ignore files), so Nightwatch never edits the project's root .gitignore (FR50). Relative to
+// .nightwatch/, the entry is a bare `out/`.
+const NESTED_GITIGNORE_ENTRY = 'out/';
 
 // Shipped declaration templates init instantiates: source template -> repo-relative (POSIX) dest.
 // Each declaration's canonical `dest` sits under .nightwatch/. `legacy` is a pre-consolidation
@@ -78,20 +81,81 @@ function writeDeclarations(root, opts = {}) {
 }
 
 /**
- * Ensure `.nightwatch/out/` is git-ignored — the transient per-run artifact dir must never be
- * committed. Idempotent: appends the entry only when absent, creating `.gitignore` if needed.
+ * Ensure the transient artifact dir is git-ignored via a NESTED `.nightwatch/.gitignore` (FR50) —
+ * the per-run `out/` must never be committed, but the project's root `.gitignore` is never touched.
+ * Idempotent: appends `out/` only when absent, creating the nested file if needed. A legacy
+ * `.nightwatch/out/` line in a root `.gitignore` is harmless and is left in place (never removed).
  * @param {string} root
- * @returns {{ changed: boolean }}
+ * @returns {{ changed: boolean, path: string }}
  */
 function ensureGitignore(root) {
-  const gi = path.join(root, '.gitignore');
+  const rel = '.nightwatch/.gitignore';
+  const gi = path.join(root, '.nightwatch', '.gitignore');
   const cur = readFileSafe(gi);
-  const bare = OUT_IGNORE.replace(/\/$/, '');
-  const has = (cur || '').split('\n').some((l) => { const t = l.trim(); return t === OUT_IGNORE || t === bare; });
-  if (has) return { changed: false };
+  const has = (cur || '').split('\n').some((l) => l.trim() === NESTED_GITIGNORE_ENTRY);
+  if (has) return { changed: false, path: rel };
+  ensureDir(path.dirname(gi));
   const sep = !cur ? '' : (cur.endsWith('\n') ? '' : '\n');
-  fs.writeFileSync(gi, (cur || '') + sep + OUT_IGNORE + '\n');
-  return { changed: true };
+  fs.writeFileSync(gi, (cur || '') + sep + NESTED_GITIGNORE_ENTRY + '\n');
+  return { changed: true, path: rel };
+}
+
+/**
+ * Plan the one-time relocation of legacy root artifacts into `.nightwatch/` (FR50). A move is
+ * proposed only when the legacy file exists AND its consolidated destination is absent (so a repo
+ * that already migrated, or opted RELEASE.md back to the root via `release_path`, proposes nothing).
+ * Read-only: computes the plan the interview presents; nothing is written until the human confirms.
+ * @param {string} root
+ * @param {{ release_path?: string }} [config]  resolved config (defaults loaded when omitted).
+ * @param {(root:string, args:string[], opts?:any)=>(string|null)} [gitFn]
+ * @returns {{ moves: { key:string, from:string, to:string, tracked:boolean }[] }}
+ */
+function planMigration(root, config, gitFn = git) {
+  const cfg = config || loadConfig(root).config;
+  const releaseTo = (cfg.release_path || '.nightwatch/RELEASE.md').split('/').join('/');
+  const candidates = [
+    { key: 'state', from: 'STATE.md', to: '.nightwatch/STATE.md' },
+    { key: 'release', from: 'RELEASE.md', to: releaseTo },
+  ];
+  const moves = [];
+  for (const c of candidates) {
+    if (c.from === c.to) continue; // release_path opts the file back to its legacy location → no move
+    if (!exists(path.join(root, ...c.from.split('/')))) continue; // no legacy file
+    if (exists(path.join(root, ...c.to.split('/')))) continue; // already at destination → idempotent
+    const tracked = gitFn(root, ['ls-files', '--error-unmatch', c.from]) != null;
+    moves.push({ key: c.key, from: c.from, to: c.to, tracked });
+  }
+  return { moves };
+}
+
+/**
+ * Apply a confirmed migration plan: move each legacy file into `.nightwatch/`, byte-for-byte —
+ * `git mv` when the file is tracked (so history follows), a content-preserving copy+unlink when
+ * not. Never clobbers an already-relocated destination (idempotent). Human confirmation happens in
+ * the interview; this executes only what was confirmed.
+ * @param {string} root @param {{ moves: {key,from,to,tracked}[] }} plan
+ * @param {(root:string, args:string[], opts?:any)=>(string|null)} [gitFn]
+ * @returns {{ key:string, from:string, to:string, moved:boolean, method:(string|null), reason:string }[]}
+ */
+function applyMigration(root, plan, gitFn = git) {
+  const report = [];
+  for (const m of (plan.moves || [])) {
+    const fromAbs = path.join(root, ...m.from.split('/'));
+    const toAbs = path.join(root, ...m.to.split('/'));
+    if (!exists(fromAbs)) { report.push({ ...m, moved: false, method: null, reason: 'source-absent' }); continue; }
+    if (exists(toAbs)) { report.push({ ...m, moved: false, method: null, reason: 'destination-exists' }); continue; }
+    ensureDir(path.dirname(toAbs));
+    if (m.tracked && gitFn(root, ['mv', m.from, m.to]) != null) {
+      report.push({ ...m, moved: true, method: 'git-mv', reason: 'moved (history preserved)' });
+    } else {
+      // Untracked, or git mv unavailable: preserve bytes exactly, then remove the source.
+      const buf = fs.readFileSync(fromAbs);
+      fs.writeFileSync(toAbs, buf);
+      fs.unlinkSync(fromAbs);
+      report.push({ ...m, moved: true, method: 'fs', reason: 'moved (content-preserved)' });
+    }
+  }
+  return report;
 }
 
 /**
@@ -268,19 +332,23 @@ function writeDevTooling(root, confirmed) {
  * human-confirmed classification), persist it into config.yaml AFTER the template is instantiated
  * so the declaration lands in a real file. Returns the structured report the command prompt reads
  * back to the human. With `probeOnly`, writes nothing.
+ * When `migrate` is true (the human confirmed the relocation of legacy root artifacts), the move
+ * runs FIRST — before declarations are instantiated — so a just-relocated `.nightwatch/STATE.md`
+ * is seen as present and never re-created from the template.
  * @param {string} root
- * @param {{ probeOnly?: boolean, config?: boolean, adapters?: any[], devTooling?: string[] }} [opts]
+ * @param {{ probeOnly?: boolean, config?: boolean, adapters?: any[], devTooling?: string[], migrate?: boolean }} [opts]
  */
 function runInit(root, opts = {}) {
   const probe = probeAdapters(root, opts.adapters);
-  if (opts.probeOnly) return { probe, declarations: [], gitignore: null, dev_tooling: null };
+  if (opts.probeOnly) return { probe, declarations: [], gitignore: null, dev_tooling: null, migration: null };
+  const migration = opts.migrate ? applyMigration(root, planMigration(root)) : null;
   const declarations = writeDeclarations(root, { config: opts.config });
   const gitignore = ensureGitignore(root);
   const dev_tooling = Array.isArray(opts.devTooling) ? writeDevTooling(root, opts.devTooling) : null;
-  return { probe, declarations, gitignore, dev_tooling };
+  return { probe, declarations, gitignore, dev_tooling, migration };
 }
 
 module.exports = {
   runInit, writeDeclarations, ensureGitignore, probeAdapters, readTemplate, TEMPLATES_DIR,
-  detectDevToolingCandidates, writeDevTooling, trackedTopDirs,
+  detectDevToolingCandidates, writeDevTooling, trackedTopDirs, planMigration, applyMigration,
 };
