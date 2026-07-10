@@ -107,8 +107,17 @@ carry that guarantee:
      fenced ` ```yaml ` block that tooling parses; prose outside the block is ignored
      by machines. Lives at root deliberately: it's a contract with humans too.
    - **`.nightwatch/config.yaml`** (operational config, all keys optional): budgets,
-     caps, cadences, ignore globs, extractor selection, tracking backend. Defaults
-     ship in the plugin; an absent or empty file is valid.
+     caps, cadences, scoping globs, extractor selection, tracking backend. Defaults
+     ship in the plugin; an absent or empty file is valid. Scoping is two-tier:
+     **`ignore`** (never look — build outputs, dependencies, caches, `.nightwatch/**`)
+     and **`dev_tooling`** (real repo content that develops the product but is not
+     the product — agent workspaces, planning artifacts, prompt/skill directories;
+     excluded from all member jobs' analysis). Shipped defaults cover well-known
+     conventions for both tiers; user-supplied lists **extend** the defaults rather
+     than replace them, with `!pattern` negation to re-include a default-excluded
+     path deliberately. Verification is the last line of defense, not a scoping
+     mechanism: excluded trees cost zero extraction, judgment, and verification
+     tokens. Exclusions are stated in one brief line, never silent.
 3. **Extractor adapters with a universal fallback (§2.6).** Language-aware signals
    come from mature ecosystem analyzers wrapped in thin adapters, selected by
    lockfile/manifest detection (`extractors: auto`). When no adapter matches — or its
@@ -660,13 +669,40 @@ from config. A crash or budget exhaustion is recorded as one brief line and **ne
 blocks the remaining jobs** — the findings-file contract means `release-progress`
 runs on whatever JSON exists, so partial nights degrade cleanly.
 
+**Interactive-run presentation** (presentation only — no new scheduling logic; every
+line is derived from `orchestrate.js --plan` output and config): before launching any
+member subagent, an interactive run prints the plan — due members in order with their
+`budget_tokens`, `effort`, and `timeout_minutes`; skipped members with `next_due`; a
+total token ceiling and bounded duration; and a scope preview (analyzed top-level
+directories with file counts, excluded directories with counts, computed by a
+deterministic walk of the resolved scoping globs at zero model-token cost). While
+running, each lifecycle event — member started, member finished (`ok` / `crashed` /
+`timeout` / `skipped`), brief assembly — is narrated as exactly one line: the same
+facts recorded in `out/run-status-<date>.json`, shown live. `--plan` prints the plan,
+estimate, and scope preview and exits: zero model-token spend, zero writes.
+
+**First-run confirmation gate:** when `.nightwatch/state.json` does not exist *and*
+the session is interactive, the orchestrator asks one yes/no after showing the plan,
+before launching members. Declining stops before any subagent launch and before any
+write. `--force` (or `--yes`) skips the gate. Scheduled/unattended runs never prompt —
+the constrained permission profile (safety rules below) always wins; if the
+environment cannot prompt, proceed. From the second run onward there is no gate. On
+scheduled runs the plan and scope summary are not printed; they land in
+`out/run-status-<date>.json` and the brief's scope line instead.
+
 **`init` mode (daytime, interactive — the one mode that may ask questions):** detects
 missing `STATE.md` / config; interviews the human (authority per area, phase, release
-target and definition of done, optional layers); probes every extractor adapter
-(§2.6) and offers install commands for detected-but-unavailable tools — the only
-moment tool installation is ever suggested; writes both declaration files from
-templates; runs each job once in dry-run; shows the first brief. Overnight mode never
-creates or edits declaration files, and never installs anything.
+target and definition of done, optional layers); scans the repo root for known
+dev-tooling conventions plus heuristic candidates (top-level git-tracked directories
+referenced by no product import) and confirms the classification with the human —
+confirmed entries land in `config.yaml` `dev_tooling:`, a declaration, visible and
+versioned, not a hidden default; probes every extractor adapter (§2.6) and offers
+install commands for detected-but-unavailable tools — the only moment tool
+installation is ever suggested; writes both declaration files from templates;
+presents the plan, estimate, and scope preview and asks the first-run confirmation
+(this is where most users pay their first full budget); runs each job once in
+dry-run; shows the first brief. Overnight mode never creates or edits declaration
+files, never reclassifies scoping, and never installs anything.
 
 **Brief assembly** (`collect-brief.js` — deterministic, because truncation must be
 mechanical; ranking *within* jobs is the jobs' judgment):
@@ -678,12 +714,29 @@ mechanical; ranking *within* jobs is the jobs' judgment):
   blockers > human decisions > drift > arch > nice-to-have.
 - Writes `briefs/<date>.md`, overwrites `MORNING.md`, appends per-job ledger lines
   (date, job, tokens, findings count, degraded flags) — through the tracking store.
+- One scope line per brief:
+  `Scope: <n> files analyzed; excluded <dirs with counts> — edit .nightwatch/config.yaml to change.`
+- One footer line naming both feedback methods:
+  `Review interactively with /nightwatch review — or mark boxes by hand: [x] acted on, [-] dismissed.`
 
 **Morning feedback loop:** brief items render as checkboxes (`acted-on` /
 `dismissed`); the next run backfills the marks into the ledger via
 `recordFeedback()`. The demotion rule (principle 3) is computed from `query()`: a
 member job with zero acted-on findings for two consecutive runs is flagged for
 retirement or redesign in the next brief — the system proposes pruning itself.
+
+**`review` mode (daytime, interactive):** `/nightwatch review [--brief <date>]` walks
+the current brief's unmarked findings in brief order, offering **acted-on** /
+**dismissed** / **skip for now** per finding — strictly selection-based; the three
+actions are the entire input vocabulary. Interpretation is the interactive layer's
+job; writing is deterministic: each decision immediately runs
+`scripts/review-feedback.js --id <finding-id> --mark acted-on|dismissed`, which
+appends one feedback row via `recordFeedback()` (the sole sanctioned ledger writer,
+dated to the brief under review) and rewrites the matching checkbox in `MORNING.md`
+and the dated brief, so file state and ledger state never disagree. Already-recorded
+ids are a stated no-op, so review, backfill, and manual checkbox edits compose in any
+interleaving without double-counting. Quitting mid-review loses nothing. Manual
+checkbox editing remains fully supported; the brief's footer names both methods.
 
 **Safety rules (normative — these bind every member job; the orchestrator enforces
 them by contract and its prompt restates them):**
@@ -722,6 +775,19 @@ the failure. No brief at all is itself a signal; the collector always attempts a
 - [ ] The identical checkout passes the full acceptance run in both distribution
       modes: registered as a plugin (`CLAUDE_PLUGIN_ROOT`) and as symlinked commands
       with `NIGHTWATCH_ROOT` set.
+- [ ] Interactive run prints plan + estimate + scope preview before any subagent
+      launches; `--plan` exits with zero model-token spend and zero writes.
+- [ ] First run (no `state.json`), interactive: declining the gate launches nothing
+      and writes nothing. Scheduled run on the same repo: no prompt, byte-identical
+      behavior to the ungated orchestrator.
+- [ ] `review` mode: each decision produces exactly one ledger feedback row and the
+      matching checkbox update; review-then-backfill and backfill-then-review record
+      no duplicates; quitting mid-review preserves recorded decisions.
+- [ ] Fresh run on a fixture repo containing `_bmad/**` and `.claude/**` with no
+      config file: zero extraction/judgment/verification tokens spent on those trees;
+      the brief carries the scope line.
+- [ ] A user `ignore:` list extends rather than replaces shipped defaults; `!pattern`
+      re-includes a default-excluded path with exactly one config entry.
 
 ---
 
@@ -749,7 +815,14 @@ cadence:  {repo-reconcile: nightly, arch-review: weekly, release-progress: night
 budget_tokens: {repo-reconcile: 200000, arch-review: 300000, release-progress: 100000}
 effort:   {repo-reconcile: medium, arch-review: high, release-progress: medium}
 caps:     {brief_total: 25, reconcile: 10, arch_candidates: 7}
-ignore:   ["dist/**", "vendor/**", "node_modules/**"]
+ignore: []                  # never analyzed; EXTENDS shipped defaults ("!pattern" re-includes)
+                            # defaults: dist/**, build/**, out/**, vendor/**, node_modules/**,
+                            #           .git/**, coverage/**, **/*.lock, .nightwatch/**
+dev_tooling: []             # development-only tooling, not product; extends shipped defaults
+                            # defaults: _bmad/**, _bmad-output/**, .claude/**, .cursor/**, q_a/**
+                            # (exact default lists finalized at implementation; criterion:
+                            # recognizable dev-workspace convention, near-zero chance of
+                            # being product surface)
 extractors: auto            # or a list, e.g. [universal-git, node-depcruise]
                             # tool resolution is always local-only: host repo's
                             # node_modules/.bin (or venv), then PATH; never installed
