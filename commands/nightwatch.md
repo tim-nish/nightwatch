@@ -54,21 +54,37 @@ to `${NW_ROOT}/scripts/init.js` so setup is reproducible and never improvised.
 3. **Interview the human** (you may ask questions here — the one mode that may): authority per area,
    phase, release target and definition of done, optional layering rules.
 
-4. **Write the declarations from templates.** Run:
+4. **Classify dev-tooling scope** (read-only detection, writes nothing):
    ```
-   node ${NW_ROOT}/scripts/init.js --repo .
+   node ${NW_ROOT}/scripts/init.js --repo . --detect-dev-tooling
+   ```
+   This prints candidate top-level directories, each tagged `convention` (matches a shipped
+   dev-tooling default) or `heuristic` (a tracked top-level dir referenced by no product import).
+   Show them to the human and confirm which are development-only tooling — "develops the product
+   but is not the product." Only the confirmed set is written (next step); this is a **visible,
+   versioned declaration**, never a hidden default.
+
+5. **Write the declarations from templates.** Run:
+   ```
+   node ${NW_ROOT}/scripts/init.js --repo . --dev-tooling "dir1,dir2/**"
    ```
    This instantiates `STATE.md` from `${NW_ROOT}/templates/STATE.md` and
    `.nightwatch/config.yaml` from `${NW_ROOT}/templates/config.yaml` **only where absent** (an
-   existing declaration is preserved byte-for-byte), and adds `.nightwatch/out/` to the repo's
-   `.gitignore`. Pass `--no-config` to write `STATE.md` only. Then help the human fill the freshly
-   written declarations from the interview answers (authority, phase, release, layers).
+   existing declaration is preserved byte-for-byte), adds `.nightwatch/out/` to the repo's
+   `.gitignore`, and persists the human-confirmed `--dev-tooling` set into config.yaml's
+   `dev_tooling:` (extends the shipped defaults). Omit `--dev-tooling` if nothing was confirmed;
+   pass `--no-config` to write `STATE.md` only. Then help the human fill the freshly written
+   declarations from the interview answers (authority, phase, release, layers).
 
-5. **Dry-run and show the first brief.** Run each job once and assemble the first brief (the
-   overnight flow below with `--force`). Stop and let the human review.
+6. **Present the plan and dry-run.** Run the overnight flow below with `--force` (a first-run
+   scheduler call reports `gate.required`). Show the plan, estimate, and scope preview — this is
+   where the human first sees the confirmed scope take effect and pays the first full budget — ask
+   the first-run confirmation, then run each job once and show the first brief. Stop and let the
+   human review.
 
-Overnight mode never creates or edits `STATE.md` or `config.yaml`, and never installs anything —
-`init` is the sole write path for the declaration files and the sole place installs are suggested.
+Overnight mode never creates or edits `STATE.md` or `config.yaml`, **never reclassifies scoping**,
+and never installs anything — `init` is the sole write path for the declaration files, the sole
+place dev-tooling is classified, and the sole place installs are suggested.
 
 ---
 
