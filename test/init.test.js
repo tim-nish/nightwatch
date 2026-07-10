@@ -10,11 +10,16 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { ROOT, tmpRepo, write, readFile, git, gitInit, commit, runScript } = require('./helpers');
-const { runInit, writeDeclarations, ensureGitignore, probeAdapters } = require('../scripts/lib/init');
+const { runInit, writeDeclarations, writeReadme, ensureGitignore, probeAdapters } = require('../scripts/lib/init');
 
 /** The exact bytes of a shipped template — the provenance oracle for AC (a). */
 function shippedTemplate(name) {
   return fs.readFileSync(path.join(ROOT, 'templates', name), 'utf8');
+}
+
+/** The exact bytes of a doc shipped with the plugin (README.md, docs/install.md, …). */
+function shippedDoc(relPath) {
+  return fs.readFileSync(path.join(ROOT, ...relPath.split('/')), 'utf8');
 }
 
 /** A conforming fake adapter whose detect/available/explain each test dials in (matches §2.6). */
@@ -121,6 +126,81 @@ module.exports = {
     assert.strictEqual(readFile(root, '.nightwatch/STATE.md'), shippedTemplate('STATE.md'));
     assert.strictEqual(readFile(root, '.nightwatch/config.yaml'), shippedTemplate('config.yaml'));
     assert.ok(Array.isArray(res.probe), 'probe report present in CLI output');
+  },
+
+  // ---- Story 8.5: the machine-owned orientation README (FR65) ----------------------------------
+  'init: a fresh pass writes .nightwatch/README.md matching the shipped template': () => {
+    const root = tmpRepo();
+    gitInit(root); commit(root, 'init');
+
+    const res = runInit(root, { adapters: [fakeAdapter({ name: 'x' })] });
+    assert.strictEqual(res.readme.written, true, 'README reported as created');
+    assert.strictEqual(res.readme.dest, '.nightwatch/README.md');
+    // Provenance: byte-identical to the shipped template.
+    const readme = readFile(root, '.nightwatch/README.md');
+    assert.strictEqual(readme, shippedTemplate('nightwatch-readme.md'), 'README is the template verbatim');
+    // The three tier headings and the MORNING.md copy-wording are present (guards the template).
+    assert.match(readme, /Read \(morning\)/);
+    assert.match(readme, /Edit \(daytime/);
+    assert.match(readme, /Machine memory \(never open\)/);
+    assert.match(readme, /byte-identical copy of the newest dated brief/, 'MORNING.md described as a copy');
+    // state.json vs STATE.md disarming line, back-to-back.
+    assert.match(readme, /Unrelated despite the name/);
+    // out/ patch exception.
+    assert.match(readme, /except `\*\.patch`/, 'out/ patch exception stated');
+  },
+
+  'init: README is write-if-absent — recreated if deleted, an existing (edited) one left untouched': () => {
+    const root = tmpRepo();
+    gitInit(root); commit(root, 'init');
+
+    // First pass creates it.
+    const first = writeReadme(root);
+    assert.strictEqual(first.written, true);
+    assert.strictEqual(readFile(root, '.nightwatch/README.md'), shippedTemplate('nightwatch-readme.md'));
+
+    // A user edits it → a second pass must NOT clobber (write-if-absent, leave-if-present).
+    const edited = '# my own notes about .nightwatch\n';
+    write(root, '.nightwatch/README.md', edited);
+    const second = writeReadme(root);
+    assert.strictEqual(second.written, false, 'existing README not rewritten');
+    assert.strictEqual(second.reason, 'exists');
+    assert.strictEqual(readFile(root, '.nightwatch/README.md'), edited, 'user edits byte-preserved');
+
+    // Deleting it and re-running recreates it from the template.
+    fs.unlinkSync(path.join(root, '.nightwatch', 'README.md'));
+    const third = writeReadme(root);
+    assert.strictEqual(third.written, true, 'deleted README recreated on next init');
+    assert.strictEqual(readFile(root, '.nightwatch/README.md'), shippedTemplate('nightwatch-readme.md'));
+  },
+
+  'init: --probe writes no README (probe is read-only)': () => {
+    const root = tmpRepo();
+    gitInit(root); commit(root, 'init');
+    const res = runInit(root, { probeOnly: true, adapters: [fakeAdapter({ name: 'x' })] });
+    assert.strictEqual(res.readme, null, 'no README on a probe-only pass');
+    assert.strictEqual(readFile(root, '.nightwatch/README.md'), null, 'README not created');
+  },
+
+  // ---- Story 8.5: doc drift guards — cheap grep assertions (spec §Tests, "docs assertions") -----
+  'docs: README.md layout block carries the three tiers + the MORNING.md copy wording': () => {
+    const doc = shippedDoc('README.md');
+    assert.match(doc, /read \(morning\)/, 'read tier label');
+    assert.match(doc, /edit \(daytime/, 'edit tier label');
+    assert.match(doc, /machine memory \(never open\)/, 'machine-memory tier label');
+    assert.match(doc, /byte-identical copy of the newest (dated brief|file in `briefs\/`)/, 'MORNING.md copy wording');
+    // out/ patch exception + the state.json/STATE.md disarming line.
+    assert.match(doc, /except `\*\.patch`/, 'out/ patch exception');
+    assert.match(doc, /Unrelated despite the name/, 'state.json/STATE.md disarming line');
+  },
+
+  'docs: install.md layout block uses the same three-tier vocabulary': () => {
+    const doc = shippedDoc('docs/install.md');
+    assert.match(doc, /read \(morning\)/);
+    assert.match(doc, /edit \(daytime/);
+    assert.match(doc, /machine memory \(never open\)/);
+    assert.match(doc, /byte-identical copy of the newest dated brief/, 'MORNING.md copy wording');
+    assert.match(doc, /except `\*\.patch`/, 'out/ patch exception');
   },
 
   // ---- AC (b): the adapter probe reports detect/available + install hint for detected-unavailable

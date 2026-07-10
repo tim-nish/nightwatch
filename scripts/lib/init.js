@@ -47,6 +47,13 @@ const DECLARATIONS = [
   { key: 'config', template: 'config.yaml', dest: '.nightwatch/config.yaml' },
 ];
 
+// Machine-owned orientation file (§2.4, FR65): the ~15-line three-tier layout map, instantiated
+// to `.nightwatch/README.md` from the shipped template. Unlike the human DECLARATIONS (which are
+// create-only and reported as "not updated" on a re-run), this is machine-owned and simply
+// recreated whenever absent — but the write-if-absent mechanic is identical, so it never clobbers
+// a version a user has edited. Only `init` writes it; no overnight code path touches it.
+const README = { template: 'nightwatch-readme.md', dest: '.nightwatch/README.md' };
+
 /** Read a shipped template's text; a missing template is a packaging bug, so throw. */
 function readTemplate(name) {
   const t = readFileSafe(path.join(TEMPLATES_DIR, name));
@@ -116,6 +123,22 @@ function ensureGitignore(root) {
   const sep = !cur ? '' : (cur.endsWith('\n') ? '' : '\n');
   fs.writeFileSync(gi, (cur || '') + sep + NESTED_GITIGNORE_ENTRY + '\n');
   return { changed: true, path: rel };
+}
+
+/**
+ * Write the machine-owned orientation README (`.nightwatch/README.md`, FR65) from the shipped
+ * template — write-if-absent, so a fresh init creates it and a deleted one is recreated on the next
+ * init, but an existing (possibly user-edited) copy is left byte-for-byte untouched. Only `init`
+ * calls this; overnight runs never do. Deterministic; no network.
+ * @param {string} root
+ * @returns {{ dest: string, written: boolean, reason: string }}
+ */
+function writeReadme(root) {
+  const abs = path.join(root, ...README.dest.split('/'));
+  if (exists(abs)) return { dest: README.dest, written: false, reason: 'exists' };
+  ensureDir(path.dirname(abs));
+  fs.writeFileSync(abs, readTemplate(README.template));
+  return { dest: README.dest, written: true, reason: 'created' };
 }
 
 /**
@@ -488,16 +511,17 @@ function applyUpdate(root, confirmed = {}) {
  */
 function runInit(root, opts = {}) {
   const probe = probeAdapters(root, opts.adapters);
-  if (opts.probeOnly) return { probe, declarations: [], gitignore: null, dev_tooling: null, migration: null };
+  if (opts.probeOnly) return { probe, declarations: [], readme: null, gitignore: null, dev_tooling: null, migration: null };
   const migration = opts.migrate ? applyMigration(root, planMigration(root)) : null;
   const declarations = writeDeclarations(root, { config: opts.config });
+  const readme = writeReadme(root);
   const gitignore = ensureGitignore(root);
   const dev_tooling = Array.isArray(opts.devTooling) ? writeDevTooling(root, opts.devTooling) : null;
-  return { probe, declarations, gitignore, dev_tooling, migration };
+  return { probe, declarations, readme, gitignore, dev_tooling, migration };
 }
 
 module.exports = {
-  runInit, writeDeclarations, ensureGitignore, probeAdapters, readTemplate, TEMPLATES_DIR,
+  runInit, writeDeclarations, writeReadme, ensureGitignore, probeAdapters, readTemplate, TEMPLATES_DIR,
   detectDevToolingCandidates, writeDevTooling, trackedTopDirs, planMigration, applyMigration,
   planUpdate, applyUpdate, setDeclarationField, currentUserDevTooling,
 };
