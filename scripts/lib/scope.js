@@ -14,7 +14,15 @@
 // line so a wrong scope is visible, never silent.
 const fs = require('fs');
 const path = require('path');
-const { makeIgnore } = require('./util');
+const { makeIgnore, git } = require('./util');
+
+// Top-level directories that are almost always product surface, so the drift nudge never flags them
+// (entry-point dirs, docs, tests). Mirrors init.js's allowlist — both keep undeclared-dir signals
+// honest; scope.js cannot import it (init.js requires scope.js — a cycle), so it is duplicated here.
+const PRODUCT_DIR_ALLOWLIST = new Set([
+  'src', 'lib', 'app', 'scripts', 'bin', 'cmd', 'pkg', 'internal',
+  'test', 'tests', 'spec', 'specs', 'docs', 'doc', 'examples', 'example',
+]);
 
 // Shipped defaults. Criterion: a recognizable dev-workspace / build convention with a near-zero
 // chance of being product surface. The spec (§7) left the exact lists to implementation — pinned
@@ -126,7 +134,55 @@ function scopePreview(root, config) {
   return { analyzed_files: sum(analyzed), excluded_files: sum(excluded), analyzed: toArr(analyzed), excluded: toArr(excluded) };
 }
 
+/** Git-tracked top-level directory names (a dir = a tracked path with a slash), sorted. */
+function trackedTopDirs(root, gitFn = git) {
+  const out = gitFn(root, ['ls-files']);
+  if (out == null) return [];
+  const dirs = new Set();
+  for (const line of out.split('\n')) {
+    const p = line.trim(); if (!p) continue;
+    const i = p.indexOf('/');
+    if (i > 0) dirs.add(p.slice(0, i));
+  }
+  return [...dirs].sort();
+}
+
+/** Top-level path segments named by declared authority artifacts (so a declared area is classified). */
+function authorityTopSegments(authority) {
+  const set = new Set();
+  if (authority && typeof authority === 'object') {
+    for (const k of Object.keys(authority)) {
+      const art = authority[k] && authority[k].artifact;
+      if (typeof art === 'string' && art.includes('/')) set.add(art.split('/')[0]);
+    }
+  }
+  return set;
+}
+
+/**
+ * Config-drift signal (FR53): git-tracked top-level directories that NO declaration classifies —
+ * not excluded by the resolved `ignore`/`dev_tooling`, not on the product allowlist, and not named
+ * by an authority declaration. These are the new/undeclared inputs the overnight brief nudges the
+ * user to classify with `/nightwatch init --update`. Deterministic (sorted); read-only — computes a
+ * signal, writes nothing. Injectables (`trackedTop`, `gitFn`) keep it unit-testable.
+ * @param {string} root
+ * @param {{ignore?: string[], dev_tooling?: string[]}} config  resolved config (extended lists)
+ * @param {{ authority?: any, gitFn?: any, trackedTop?: string[] }} [opts]
+ * @returns {string[]}
+ */
+function unclassifiedTopDirs(root, config, opts = {}) {
+  const excluded = makeIgnore(analysisExcludeGlobs(config));
+  const authTops = authorityTopSegments(opts.authority);
+  const dirs = opts.trackedTop || trackedTopDirs(root, opts.gitFn);
+  return dirs.filter((d) =>
+    !excluded(`${d}/__scope_probe__`)
+    && !PRODUCT_DIR_ALLOWLIST.has(d)
+    && !authTops.has(d)
+  ).sort();
+}
+
 module.exports = {
-  DEFAULT_IGNORE, DEFAULT_DEV_TOOLING,
+  DEFAULT_IGNORE, DEFAULT_DEV_TOOLING, PRODUCT_DIR_ALLOWLIST,
   extendGlobs, analysisExcludeGlobs, excludedTopDirs, scopePreview,
+  trackedTopDirs, authorityTopSegments, unclassifiedTopDirs,
 };
