@@ -3,7 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { tmpRepo, write, readFile } = require('./helpers');
-const { openTracker, itemId } = require('../scripts/lib/tracker');
+const { openTracker, itemId, parseRelease, seedFromRelease } = require('../scripts/lib/tracker');
 
 const TEMPLATE = fs.readFileSync(path.join(__dirname, '..', 'templates', 'RELEASE.md'), 'utf8');
 
@@ -114,11 +114,89 @@ const markdownOnly = {
     t.completeItem(a.id);
     t.flush();
     const out = readFile(r, '.nightwatch/RELEASE.md');
+    // Canonical reader-side order (FR63): Done sits between Nice to have and Status update, so bound
+    // the completed item by ## Done and the section that follows it.
     const doneIdx = out.indexOf('## Done');
-    const implIdx = out.indexOf('## Remaining — implementation');
+    const afterDoneIdx = out.indexOf('## Status update');
     const itemIdx = out.indexOf('finish A');
-    assert.ok(itemIdx > doneIdx && itemIdx < implIdx, 'item sits in the Done section');
+    assert.ok(itemIdx > doneIdx && itemIdx < afterDoneIdx, 'item sits in the Done section');
     assert.ok(/- \[x\] finish A/.test(out), 'rendered checked');
+  },
+
+  // Story 8.4 / FR63 — a dirtied document in the LEGACY (pre-reorder) section order re-serializes
+  // into the canonical reader-side order; the Notes body and a human-authored item's raw text are
+  // byte-preserved, and machine-rendered item ids trail their line.
+  'tracker[markdown]: legacy-order doc re-serializes into canonical order; Notes + human raw byte-preserved; ids trail': () => {
+    const r = tmpRepo();
+    const humanLine = '- [ ] Human owns this EXACT text, do not touch <!-- nw:IT-abc123 -->';
+    // RELEASE.md in the OLD (pre-8.4) section order (history first, next actions last).
+    const legacy = [
+      '---', 'phase: prototype', 'target: "v0.1"', 'progress: 0', 'updated: 1970-01-01', '---',
+      '# Release progress', '',
+      '## Status update (latest first, capped at 10 entries)', '- 1970-01-01 — seeded', '',
+      '## Phase', '_Mirrors STATE.md `phase`._', '',
+      '## Done', '<!-- completed work -->', '',
+      '## Remaining — implementation', humanLine, '',
+      '## Remaining — documentation', '',
+      '## Release blockers', '',
+      '## Human decisions needed', '',
+      '## Nice to have', '',
+      '## Next actions (top 3)', '',
+      '## Notes (human-owned — never machine-edited)', '<!-- guard -->', 'My private plan.', 'Line two.', '',
+    ].join('\n');
+    write(r, '.nightwatch/RELEASE.md', legacy);
+
+    const t = openTracker(r, { tracking: { backend: 'markdown' } });
+    t.upsertItem({ key: 'new/thing', title: 'a machine-added item', section: 'implementation' });
+    t.flush();
+
+    const out = readFile(r, '.nightwatch/RELEASE.md');
+    // Canonical reader-side order: Next → Blockers → Decisions → impl → docs → Nice → Done → Status → Phase → Notes.
+    const order = [
+      '## Next actions (top 3)', '## Release blockers', '## Human decisions needed',
+      '## Remaining — implementation', '## Remaining — documentation', '## Nice to have',
+      '## Done', '## Status update', '## Phase', '## Notes',
+    ].map((h) => out.indexOf(h));
+    assert.ok(order.every((i) => i >= 0), 'every canonical section present');
+    for (let i = 1; i < order.length; i++) assert.ok(order[i] > order[i - 1], `section ${i} follows ${i - 1} in canonical order`);
+    // Byte-preservation: the human item's raw line and the Notes body survive verbatim.
+    assert.ok(out.includes(humanLine), 'human item raw line preserved verbatim');
+    assert.ok(out.includes('My private plan.\nLine two.'), 'Notes body byte-preserved');
+    // The machine-added item's id trails the line (id marker at the END).
+    const mLine = out.split('\n').find((l) => l.includes('a machine-added item'));
+    assert.match(mLine, /<!-- nw:IT-[0-9a-f]{6} -->\s*$/, 'machine item id trails the line');
+  },
+
+  // Story 8.4 / FR63 — a legacy leading-id item line parses to the same {id,title,done} as the
+  // canonical trailing-id form (so a pre-reorder file still reads correctly).
+  'tracker[markdown]: a legacy leading-id item parses to the same item as the trailing-id form': () => {
+    const mk = (itemLine) => [
+      '---', 'progress: 0', '---', '# Release progress', '',
+      '## Remaining — implementation', itemLine, '',
+      '## Notes (human-owned — never machine-edited)', '',
+    ].join('\n');
+    const leading = seedFromRelease(parseRelease(mk('- [ ] IT-abc123 — Do the thing'))).items;
+    const trailing = seedFromRelease(parseRelease(mk('- [ ] Do the thing <!-- nw:IT-abc123 -->'))).items;
+    assert.strictEqual(leading.length, 1, 'leading form parses one item');
+    assert.strictEqual(trailing.length, 1, 'trailing form parses one item');
+    assert.strictEqual(leading[0].id, trailing[0].id, 'same id');
+    assert.strictEqual(leading[0].title, trailing[0].title, 'same title');
+    assert.strictEqual(leading[0].status, trailing[0].status, 'same status');
+  },
+
+  // Story 8.4 / NFR8 — a re-serialized tracker renders byte-identically across two runs.
+  'tracker[markdown]: a re-serialized tracker is byte-identical across two runs (determinism)': () => {
+    const r = tmpRepo();
+    const t1 = openTracker(r, { tracking: { backend: 'markdown' } });
+    t1.upsertItem({ key: 'work/A', title: 'do A', section: 'implementation' });
+    t1.appendStatus('did a thing', '2000-01-01');
+    t1.flush();
+    const first = readFile(r, '.nightwatch/RELEASE.md');
+    // Re-open (seeds from the just-written file), dirty it identically, and re-serialize.
+    const t2 = openTracker(r, { tracking: { backend: 'markdown' } });
+    t2.upsertItem({ key: 'work/A', title: 'do A', section: 'implementation' });
+    t2.flush();
+    assert.strictEqual(readFile(r, '.nightwatch/RELEASE.md'), first, 're-serialize is byte-identical');
   },
 
   'tracker: unknown backend → setup finding, markdown fallback, no partial writes': () => {
