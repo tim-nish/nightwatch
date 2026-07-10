@@ -53,29 +53,46 @@ function readTemplate(name) {
   return t;
 }
 
+/** Human-facing filename for a declaration dest (e.g. `.nightwatch/STATE.md` → `STATE.md`). */
+function declLabel(dest) { return dest.split('/').pop(); }
+
 /**
  * Instantiate the shipped declaration templates into `root`, but ONLY where absent — init is
  * setup, not overwrite, so an existing STATE.md / config.yaml is never clobbered. Content is the
  * template verbatim (the human then edits it, or re-runs init). Deterministic; no network.
+ *
+ * init is CREATE-ONLY for declarations: it never refreshes an existing one. Each report entry
+ * carries a human-readable `message` so re-running is honest about the boundary (FR51) — an
+ * already-existing declaration is reported as "not updated; edit it directly or run
+ * `/nightwatch init --update`" rather than a silent `reason: 'exists'`. `existing` names the path
+ * that actually holds it (the nested dest, or a legacy root file), so the human edits the right one.
  * @param {string} root
  * @param {{ config?: boolean }} [opts]  also write .nightwatch/config.yaml (default true).
- * @returns {{ file: string, dest: string, written: boolean, reason: string }[]}
+ * @returns {{ file: string, dest: string, written: boolean, reason: string, message: string, existing?: string }[]}
  */
 function writeDeclarations(root, opts = {}) {
   const writeConfig = opts.config !== false;
   const report = [];
   for (const d of DECLARATIONS) {
     if (d.key === 'config' && !writeConfig) continue;
+    const label = declLabel(d.dest);
     const abs = path.join(root, ...d.dest.split('/'));
     const legacyAbs = d.legacy ? path.join(root, ...d.legacy.split('/')) : null;
-    if (exists(abs) || (legacyAbs && exists(legacyAbs))) {
-      // Present at the nested dest OR a legacy root location → never clobber, never shadow.
-      report.push({ file: d.key, dest: d.dest, written: false, reason: 'exists' });
+    // Present at the nested dest OR a legacy root location → never clobber, never shadow.
+    const existing = exists(abs) ? d.dest : (legacyAbs && exists(legacyAbs) ? d.legacy : null);
+    if (existing) {
+      report.push({
+        file: d.key, dest: d.dest, written: false, reason: 'exists', existing,
+        message: `${label} already exists (${existing}) — not updated; edit it directly or run \`/nightwatch init --update\`.`,
+      });
       continue;
     }
     ensureDir(path.dirname(abs));
     fs.writeFileSync(abs, readTemplate(d.template));
-    report.push({ file: d.key, dest: d.dest, written: true, reason: 'created' });
+    report.push({
+      file: d.key, dest: d.dest, written: true, reason: 'created',
+      message: `created ${d.dest} from the shipped template.`,
+    });
   }
   return report;
 }
