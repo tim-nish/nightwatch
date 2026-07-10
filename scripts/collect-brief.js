@@ -12,7 +12,7 @@ const { parseArgs, repoRoot, todayISO, nwDir, outDir, ensureDir, readFileSafe, r
 const { readAllFindings } = require('./lib/findings');
 const { openTracker, releaseReadPath } = require('./lib/tracker');
 const { loadConfig } = require('./lib/config');
-const { excludedTopDirs } = require('./lib/scope');
+const { excludedTopDirs, unclassifiedTopDirs } = require('./lib/scope');
 
 const MEMBER_JOBS = ['repo-reconcile', 'arch-review', 'release-progress'];
 
@@ -80,7 +80,7 @@ function computeDemotions(root, store) {
 }
 
 function collect(root, date, { force = false } = {}) {
-  const { config } = loadConfig(root);
+  const { config, authority } = loadConfig(root);
   const cap = (config.caps && config.caps.brief_total) || 25;
   const store = openTracker(root, config);
 
@@ -142,6 +142,20 @@ function collect(root, date, { force = false } = {}) {
   const demotions = computeDemotions(root, store);
   for (const job of demotions) failLines.push(`- ${job}: **demotion candidate** — zero acted-on findings two runs running; retire or redesign.`);
   if (failLines.length) L.push(...failLines); else L.push('- none');
+  L.push('');
+
+  // 5b. Config drift (FR53): name each new top-level directory no declaration classifies (neither
+  // product-declared, nor in ignore/dev_tooling) and point at `init --update`. Detection + reporting
+  // only — the overnight run writes no declarations; the lines are byte-deterministic (sorted).
+  const driftDirs = unclassifiedTopDirs(root, config, { authority });
+  L.push('## Config drift');
+  if (driftDirs.length) {
+    for (const d of driftDirs) {
+      L.push(`- new top-level directory \`${d}/\` is unclassified; run \`/nightwatch init --update\` or add it to \`.nightwatch/config.yaml\`.`);
+    }
+  } else {
+    L.push('- none');
+  }
   L.push('');
 
   // 6. Appendix pointer
