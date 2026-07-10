@@ -34,10 +34,45 @@ function evStr(ev) {
   return ev.map((e) => e.line != null ? `${e.path}:${e.line}` : e.path).join(', ');
 }
 
-function renderItem(f) {
+// A deterministic, collision-resistant Details anchor for a finding. Stable ids in → stable
+// anchors out, so the action line's `→ [details](#…)` link and the Details heading always agree
+// and the brief stays byte-deterministic (NFR8).
+function detailsAnchor(f) { return `d-${f.id}`; }
+
+// The imperative summary a reader acts on: the judgment-authored `next_step.summary` when present,
+// otherwise the finding's own title (FR54 fallback — the composition degrades, it never breaks).
+function actionSummary(f) {
+  return (f.next_step && f.next_step.summary) ? f.next_step.summary : f.title;
+}
+
+// One action line, rendered mechanically from `next_step` (spec §6). Checkbox first (the feedback
+// touch-point), bold verb-first summary, `~N min` when estimated, the copy-pasteable command block
+// when present, and an anchor link into Details. When a `next_step.summary` stands in for the
+// title, the title becomes the one-sentence "why". Evidence and the human-visible id live only in
+// Details — the reader meets the action here, never the code. (Richer grammar/bundling: Story 8.3.)
+function renderActionLine(f, lines) {
+  const ns = f.next_step || {};
+  const effort = typeof ns.effort_min === 'number' ? ` — ~${ns.effort_min} min` : '';
+  const anchor = `→ [details](#${detailsAnchor(f)})`;
+  const why = (ns.summary && f.title && f.title !== ns.summary) ? ` ${f.title.replace(/\s+$/, '')}.` : '';
+  // The id manifest is invisible in rendered Markdown but is how backfill/review map a checked box
+  // back to its finding (feedback.js) — one id per line here, a list once bundling lands (8.3).
+  const ids = `<!-- ids: ${f.id} -->`;
+  if (ns.command) {
+    lines.push(`- [ ] **${actionSummary(f)}**${effort}: ${ids}`, '', `      ${ns.command}`, '', `  ${why ? why.trim() + ' ' : ''}${anchor}`);
+  } else {
+    lines.push(`- [ ] **${actionSummary(f)}**${effort}.${why} ${anchor} ${ids}`);
+  }
+}
+
+// One Details block per shown finding: the evidence, severity, human-visible id, and action tag
+// the action line deliberately omitted. Anchored so the action line links straight to it.
+function renderDetails(f, lines) {
   const ev = evStr(f.evidence);
-  const act = f.action && f.action !== 'none' ? `  _[${f.action}]_` : '';
-  return `- [ ] \`${f.id}\` (sev${f.severity}) ${f.title}` + (ev ? ` — evidence: ${ev}` : '') + act;
+  lines.push(`### ${actionSummary(f)} <a id="${detailsAnchor(f)}"></a>`);
+  if (ev) lines.push(`- evidence: ${ev}`);
+  const act = f.action && f.action !== 'none' ? ` · ${f.action}` : '';
+  lines.push(`- severity ${f.severity} · id \`${f.id}\`${act}`, '');
 }
 
 function readReleaseHeader(root, config) {
@@ -48,6 +83,29 @@ function readReleaseHeader(root, config) {
   if (m) { try { fm = yaml.load(m[1]) || {}; } catch { /* */ } }
   const statusLine = (text.match(/^-\s+\d{4}-\d{2}-\d{2}\s+—.*$/m) || [])[0] || null;
   return { fm, statusLine };
+}
+
+// The brief's status line: one bold sentence answering "is anything on fire?" before anything else
+// (spec §6). Derived from counts of what's shown. (Story 8.1 lays down the tiers; Story 8.2 refines
+// the exact wording and names crashed/timed-out members.)
+function deriveStatusLine(shown) {
+  const blockers = shown.filter((f) => f._cls.label === 'blocker').length;
+  const decisions = shown.filter((f) => f._cls.label === 'decision').length;
+  if (blockers) return `**${blockers} release blocker${blockers > 1 ? 's' : ''}.** Start below.`;
+  if (decisions) return `**${decisions} decision${decisions > 1 ? 's' : ''} ${decisions > 1 ? 'need' : 'needs'} you.** Nothing else is blocking.`;
+  if (shown.length) return '**Quiet night.** Nothing is blocking, no decisions needed — a few things are waiting below.';
+  return '**Quiet night.** Nothing needs you today.';
+}
+
+// The "Where you stand" release-position block (spec §6): the progress toward the target and a
+// pointer to the tracker — never the tracker's full status-entry text, so MORNING.md and RELEASE.md
+// no longer duplicate it. (Ratio + remaining-criterion titles: Story 8.4.)
+function renderWhereYouStand(rel, lines) {
+  if (rel && rel.fm && rel.fm.progress != null) {
+    lines.push(`- **${progressPercent(rel.fm.progress)}%** toward ${rel.fm.target || 'release'} (phase: ${rel.fm.phase || 'unset'}). Full tracker: \`.nightwatch/RELEASE.md\`.`);
+  } else {
+    lines.push('- No RELEASE.md yet — run `/release-progress` (or `/nightwatch`) to create it.');
+  }
 }
 
 // Demotion (spec principle 3): a member job with zero acted-on findings for the two most
@@ -94,85 +152,77 @@ function collect(root, date, { force = false } = {}) {
     for (const n of doc.degraded || []) degradedNotices.push({ job: doc.job, note: n });
     for (const f of doc.findings || []) if (briefEligible(f)) all.push({ ...f, job: doc.job, _cls: classify(f) });
   }
-  // Global ranking for the cap.
+  // Global ranking for the cap: rank class, then severity, then id (deterministic — NFR8).
   all.sort((a, b) => a._cls.rank - b._cls.rank || a.severity - b.severity || a.id.localeCompare(b.id));
-  const included = new Set(all.slice(0, cap).map((f) => f.id));
+  const shown = all.slice(0, cap);
   const overflow = all.slice(cap);
 
-  const inc = (pred) => all.filter((f) => included.has(f.id) && pred(f));
-
-  // ---- Assemble sections in fixed order ----
+  // ---- Compose for a 30-second read (spec §6): status, ONE first action, and the release
+  // position all land ABOVE the fold; evidence, ids, and degraded notices below it. ----
   const L = [];
-  L.push(`# Nightwatch — morning brief (${date})`, '');
+  L.push(`# Nightwatch — ${date}`, '');
 
-  // 1. Release-progress delta
+  // Status line — one bold sentence answering "is anything on fire?" before anything else.
+  L.push(deriveStatusLine(shown), '');
+
+  // ▶ First action — exactly one (the top-ranked shown finding), fully renderable without reading on.
+  const first = shown[0] || null;
+  L.push('## ▶ First action');
+  if (first) renderActionLine(first, L); else L.push('- Nothing needs you today.');
+  L.push('');
+
+  // If you have energy after that — the remaining shown findings as action lines, same grammar.
+  const rest = shown.slice(1);
+  L.push('## If you have energy after that');
+  if (rest.length) for (const f of rest) renderActionLine(f, L); else L.push('- Nothing else right now.');
+  L.push('');
+
+  // Where you stand — release position, then a pointer to the tracker (never its status-entry text).
   const rel = readReleaseHeader(root, config);
-  L.push('## Release progress');
-  if (rel && rel.fm && rel.fm.progress != null) {
-    L.push(`- Progress: **${progressPercent(rel.fm.progress)}%** toward ${rel.fm.target || 'release'} (phase: ${rel.fm.phase || 'unset'})`);
-    if (rel.statusLine) L.push(`  ${rel.statusLine.trim()}`);
-  } else {
-    L.push('- No RELEASE.md yet — run `/release-progress` (or `/nightwatch`) to create it.');
-  }
+  L.push('## Where you stand');
+  renderWhereYouStand(rel, L);
   L.push('');
 
-  // 2. Human decisions (merged across jobs)
-  const decisions = inc((f) => f._cls.label === 'decision');
-  L.push('## Human decisions required');
-  if (decisions.length) for (const f of decisions) L.push(renderItem(f)); else L.push('- none');
-  L.push('');
+  // ---- Fold: everything below is supporting detail. ----
+  L.push('---', '*Everything below is supporting detail. You can stop reading here.*', '');
 
-  // 3. Reconcile findings (blockers + drift + setup from repo-reconcile)
-  const rc = inc((f) => f.job === 'repo-reconcile' && f._cls.label !== 'decision');
-  L.push('## Consistency (repo-reconcile)');
-  if (rc.length) for (const f of rc) L.push(renderItem(f)); else L.push('- 0 findings');
-  L.push('');
+  // Details — one block per shown finding (evidence, severity, human-visible id), plus the
+  // ids-only overflow appendix.
+  L.push('## Details', '');
+  if (shown.length) for (const f of shown) renderDetails(f, L); else L.push('- No findings today.', '');
+  L.push('**Appendix (overflow — ids only):** ' + (overflow.length ? overflow.map((f) => `\`${f.id}\``).join(', ') : 'none'), '');
 
-  // 4. Arch candidates
-  const ar = inc((f) => f.job === 'arch-review' && f._cls.label !== 'decision');
-  L.push('## Architecture (arch-review)');
-  if (ar.length) for (const f of ar) L.push(renderItem(f)); else L.push('- 0 findings');
-  L.push('');
-
-  // 5. Failures & degraded notices
-  L.push('## Failures & degraded notices');
-  const failLines = [];
-  for (const j of runStatus.jobs || []) if (j.status && j.status !== 'ok') failLines.push(`- ${j.job}: **${j.status}**${j.note ? ' — ' + j.note : ''}`);
-  for (const d of degradedNotices) failLines.push(`- ${d.job}: degraded — ${d.note}`);
+  // Machine notes — nothing to act on: degraded notices, failed/timed-out members, demotion
+  // candidates, zero-finding member jobs, config drift, and the scope line.
+  L.push('## Machine notes — nothing to act on');
+  const notes = [];
+  for (const j of runStatus.jobs || []) if (j.status && j.status !== 'ok') notes.push(`- ${j.job}: **${j.status}**${j.note ? ' — ' + j.note : ''}`);
+  for (const d of degradedNotices) notes.push(`- ${d.job}: degraded — ${d.note}`);
   const demotions = computeDemotions(root, store);
-  for (const job of demotions) failLines.push(`- ${job}: **demotion candidate** — zero acted-on findings two runs running; retire or redesign.`);
-  if (failLines.length) L.push(...failLines); else L.push('- none');
-  L.push('');
-
-  // 5b. Config drift (FR53): name each new top-level directory no declaration classifies (neither
+  for (const job of demotions) notes.push(`- ${job}: **demotion candidate** — zero acted-on findings two runs running; retire or redesign.`);
+  // Zero-finding member jobs render here, never as an empty section above the fold.
+  const shownJobs = new Set(shown.map((f) => f.job));
+  for (const doc of docs) if (!shownJobs.has(doc.job) && !(doc.findings || []).some(briefEligible)) {
+    notes.push(`- ${doc.job}: 0 verified findings.`);
+  }
+  // Config drift (FR53): name each new top-level directory no declaration classifies (neither
   // product-declared, nor in ignore/dev_tooling) and point at `init --update`. Detection + reporting
   // only — the overnight run writes no declarations; the lines are byte-deterministic (sorted).
   const driftDirs = unclassifiedTopDirs(root, config, { authority });
-  L.push('## Config drift');
-  if (driftDirs.length) {
-    for (const d of driftDirs) {
-      L.push(`- new top-level directory \`${d}/\` is unclassified; run \`/nightwatch init --update\` or add it to \`.nightwatch/config.yaml\`.`);
-    }
-  } else {
-    L.push('- none');
+  for (const d of driftDirs) {
+    notes.push(`- new top-level directory \`${d}/\` is unclassified; run \`/nightwatch init --update\` or add it to \`.nightwatch/config.yaml\`.`);
   }
-  L.push('');
-
-  // 6. Appendix pointer
-  L.push('## Appendix (overflow — ids only)');
-  if (overflow.length) L.push('- ' + overflow.map((f) => `\`${f.id}\``).join(', ')); else L.push('- none');
-  L.push('');
-  // Scope statement (FR42): name the excluded top-level trees so a wrong scope is visible on the
-  // brief, never silent. `ignore` (never look) and `dev_tooling` (not the product) are unioned.
+  // Scope statement (FR42): name the excluded top-level trees so a wrong scope is visible, never
+  // silent. `ignore` (never look) and `dev_tooling` (not the product) are unioned.
   const excluded = excludedTopDirs(root, config);
-  L.push(excluded.length
-    ? `Scope: excluded ${excluded.join(', ')} (ignore + dev_tooling) — edit \`.nightwatch/config.yaml\` to change.`
-    : 'Scope: no top-level directories excluded — edit `.nightwatch/config.yaml` to change.');
-  L.push('');
+  notes.push(excluded.length
+    ? `- Scope: excluded ${excluded.join(', ')} (ignore + dev_tooling) — edit \`.nightwatch/config.yaml\` to change.`
+    : '- Scope: no top-level directories excluded — edit `.nightwatch/config.yaml` to change.');
+  L.push(...notes, '');
 
   // Footer names BOTH feedback methods (FR44): the interactive review command and hand-editing the
   // checkboxes — either records the same ledger feedback.
-  L.push('---', `_Review interactively with \`/nightwatch review\` — or mark boxes by hand (\`[x]\` acted-on, \`[-]\` dismiss); the next run backfills the ledger. Total findings: ${all.length}, shown: ${included.size}, cap: ${cap}._`);
+  L.push('---', `_Review interactively with \`/nightwatch review\` — or mark boxes by hand (\`[x]\` acted-on, \`[-]\` dismiss); the next run backfills the ledger. Total findings: ${all.length}, shown: ${shown.length}, cap: ${cap}._`);
 
   const briefText = L.join('\n') + '\n';
 
@@ -193,10 +243,10 @@ function collect(root, date, { force = false } = {}) {
       store.recordRun({ date, job: doc.job, findings: (doc.findings || []).length, degraded: (doc.degraded || []).length, tokens: js.tokens || null });
       store.recordFindings(doc.findings || [], { date, job: doc.job });
     }
-    store.recordRun({ date, job: 'collect-brief', shown: included.size, total: all.length, cap });
+    store.recordRun({ date, job: 'collect-brief', shown: shown.length, total: all.length, cap });
   }
 
-  return { total: all.length, shown: included.size, overflow: overflow.length, demotions };
+  return { total: all.length, shown: shown.length, overflow: overflow.length, demotions };
 }
 
 // Write a one-line stub brief that names a failure, WITHOUT touching any out/*.json. "No brief at

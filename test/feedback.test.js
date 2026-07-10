@@ -12,11 +12,23 @@ function finding(id, over) {
   return Object.assign({ id, kind: 'drift', severity: 2, title: `t ${id}`, evidence: [], action: 'none', verified: true }, over);
 }
 
-/** Simulate the human ticking a box in the current MORNING.md: `[ ]` → `[x]`/`[-]` for one id. */
+/**
+ * Simulate the human ticking a box in the current MORNING.md: `[ ]` → `[x]`/`[-]` for one id.
+ * In the new composition the id is NOT on the checkbox line's visible text — it lives in the line's
+ * `<!-- ids: <id> -->` manifest — so target the empty-box line whose manifest carries the id.
+ */
 function markBox(root, id, box = 'x') {
   const text = readFile(root, '.nightwatch/MORNING.md');
-  const marked = text.replace(new RegExp(`- \\[ \\] (\`${id}\`)`), `- [${box}] $1`);
-  assert.notStrictEqual(marked, text, `box for ${id} was present to mark`);
+  const idRe = new RegExp(`<!--\\s*ids:[^>]*\\b${id}\\b[^>]*-->`);
+  let found = false;
+  const marked = text.split('\n').map((line) => {
+    if (!found && /^\s*- \[ \]/.test(line) && idRe.test(line)) {
+      found = true;
+      return line.replace('- [ ]', `- [${box}]`);
+    }
+    return line;
+  }).join('\n');
+  assert.ok(found, `box for ${id} was present to mark`);
   write(root, '.nightwatch/MORNING.md', marked);
 }
 
@@ -24,11 +36,11 @@ module.exports = {
   // ---- AC1: checkbox marks in the previous brief are backfilled via recordFeedback ----
   'feedback: parseMarks reads acted-on/dismissed boxes and ignores unchecked': () => {
     const brief = [
-      '# Nightwatch — morning brief (2001-01-01)',
-      '- [x] `RC-aaaaaa` (sev2) acted on this',
-      '- [ ] `RC-bbbbbb` (sev2) left unchecked',
-      '- [-] `AR-cccccc` (sev3) dismissed this',
-      '- [~] `AR-dddddd` (sev3) also dismissed',
+      '# Nightwatch — 2001-01-01',
+      '- [x] **acted on this** <!-- ids: RC-aaaaaa -->',
+      '- [ ] **left unchecked** <!-- ids: RC-bbbbbb -->',
+      '- [-] **dismissed this** <!-- ids: AR-cccccc -->',
+      '- [~] **also dismissed** <!-- ids: AR-dddddd -->',
     ].join('\n');
     const marks = parseMarks(brief);
     assert.deepStrictEqual(marks, [

@@ -34,6 +34,16 @@
  */
 
 /**
+ * The morning rendering of a finding — the imperative action a tired reader takes, authored by
+ * the job's judgment layer and reviewed by the same adversarial pass as the finding (spec §2.5,
+ * FR54). Optional: a finding without a `next_step` still renders, falling back to its `title`.
+ * @typedef {object} NextStep
+ * @property {string} summary Imperative, verb-first, ≤ 60 chars — what the human *does*.
+ * @property {string} [command] Copy-pasteable command, when one action resolves the finding.
+ * @property {number} [effort_min] Coarse effort estimate in minutes, rendered `~N min`.
+ */
+
+/**
  * A single finding — the inter-command interface unit. Ids are stable across runs so the
  * ledger can dedupe, count recurrence, and track acted-on/dismissed state.
  * @typedef {object} Finding
@@ -44,6 +54,7 @@
  * @property {EvidenceItem[]} evidence Concrete, checkable `{path, line}` evidence loci.
  * @property {FindingAction} action
  * @property {boolean} verified Whether the finding survived adversarial verification.
+ * @property {NextStep} [next_step] Optional morning-action rendering (FR54); falls back to `title`.
  */
 
 /**

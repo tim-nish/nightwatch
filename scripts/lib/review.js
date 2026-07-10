@@ -15,18 +15,24 @@ const path = require('path');
 const { nwDir, readFileSafe } = require('./util');
 const { briefDate } = require('./feedback');
 
-// A rendered brief item: `- [ ] \`<id>\` (sev…) …` (collect-brief renderItem). Capture the box
-// state and the id so identity survives freeform edits to the surrounding text.
-const ITEM_RE = /^(\s*- \[)([ xX~-])(\]\s+`)([^`]+)(`.*)$/;
+// A rendered brief action line carries its finding id(s) in an invisible manifest comment on the
+// checkbox line — `- [ ] **summary** … <!-- ids: rc-1 -->` (collect-brief renderActionLine).
+// Capture the box state and the manifest so identity survives freeform edits, and one bundled line
+// resolves to every id it covers (spec §6, FR58/FR60). One id per line in 8.1; a list under 8.3.
+const ITEM_RE = /^(\s*- \[)([ xX~-])(\].*?<!--\s*ids:\s*)([^>]*?)(\s*-->.*)$/;
 // The three selections map to the two ledger verdicts; "skip for now" writes nothing at all.
 const MARK_BOX = Object.freeze({ 'acted-on': 'x', dismissed: '-' });
+
+/** The comma-separated ids carried in a matched action line's manifest. */
+function lineIds(m) { return m[4].split(',').map((s) => s.trim()).filter(Boolean); }
 
 /** Every finding in brief order with its current box state — `marked` is false only for `[ ]`. */
 function listFindings(text) {
   const out = [];
   for (const line of (text || '').split('\n')) {
     const m = line.match(ITEM_RE);
-    if (m) out.push({ id: m[4], box: m[2], marked: m[2] !== ' ' });
+    if (!m) continue;
+    for (const id of lineIds(m)) out.push({ id, box: m[2], marked: m[2] !== ' ' });
   }
   return out;
 }
@@ -37,9 +43,10 @@ function listUnmarked(text) {
 }
 
 /**
- * Rewrite the checkbox of finding `id` to reflect `mark` (acted-on → `[x]`, dismissed → `[-]`).
- * Only the matching line changes; everything else — other findings, prose, whitespace, the trailing
- * newline — is byte-preserved. Returns `{text, changed}`; an absent id leaves the text untouched.
+ * Rewrite the checkbox of the action line covering finding `id` to reflect `mark` (acted-on →
+ * `[x]`, dismissed → `[-]`). Only the matching line changes; everything else — other findings,
+ * prose, whitespace, the trailing newline — is byte-preserved. Returns `{text, changed}`; an absent
+ * id leaves the text untouched.
  * @param {string} text @param {string} id @param {'acted-on'|'dismissed'} mark
  */
 function rewriteCheckbox(text, id, mark) {
@@ -48,7 +55,7 @@ function rewriteCheckbox(text, id, mark) {
   let changed = false;
   const lines = (text || '').split('\n').map((line) => {
     const m = line.match(ITEM_RE);
-    if (m && m[4] === id) { changed = true; return `${m[1]}${box}${m[3]}${m[4]}${m[5]}`; }
+    if (m && lineIds(m).includes(id)) { changed = true; return `${m[1]}${box}${m[3]}${m[4]}${m[5]}`; }
     return line;
   });
   return { text: lines.join('\n'), changed };
