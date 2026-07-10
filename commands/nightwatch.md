@@ -102,9 +102,37 @@ to `${NW_ROOT}/scripts/init.js` so setup is reproducible and never improvised.
    the first-run confirmation, then run each job once and show the first brief. Stop and let the
    human review.
 
+### `/nightwatch init --update` — non-destructive reconfigure (daytime, interactive)
+
+Run this when the user types `/nightwatch init --update`. Like `init`, it is a daytime,
+interactive mode that may ask questions; it is **never** invoked on a scheduled run. It brings an
+existing config back in sync as the repo evolves, without clobbering anything — it proposes only
+what *changed* and applies only what the human confirms.
+
+1. **Re-run detection** (read-only, writes nothing):
+   ```
+   node ${NW_ROOT}/scripts/init.js --repo . --update
+   ```
+   Prints `proposals` — each a `dev_tooling` candidate not yet covered, or a `module`: a new
+   top-level directory no declaration classifies (neither product-declared nor in
+   `ignore`/`dev_tooling`). A repo unchanged since the last init/update proposes nothing.
+2. **Confirm per proposal.** Show each proposal's `summary` and let the human accept, edit, or
+   skip it — a `dev_tooling` add classifies the dir as tooling; a skipped `module` stays product.
+   Nothing is written for a skipped item.
+3. **Apply only the confirmed set** — the confirmed dev-tooling additions are unioned with the
+   current declaration and written, config.yaml otherwise byte-preserved:
+   ```
+   node ${NW_ROOT}/scripts/init.js --repo . --update --dev-tooling "dir1,dir2/**"
+   ```
+   A confirmed declaration-field change (e.g. `phase:`) is applied through the same gate
+   (byte-preserving the rest of the file). Both write paths flow through this one
+   propose → confirm → apply gate — nothing is create-only in one place and silent-overwrite in
+   another. Re-running with no repo change proposes and writes nothing (idempotent).
+
 Overnight mode never creates or edits `STATE.md` or `config.yaml`, **never reclassifies scoping**,
-and never installs anything — `init` is the sole write path for the declaration files, the sole
-place dev-tooling is classified, and the sole place installs are suggested.
+never runs `--update`, and never installs anything — `init` (and `init --update`) is the sole write
+path for the declaration files, the sole place dev-tooling is classified, and the sole place
+installs are suggested.
 
 ---
 
