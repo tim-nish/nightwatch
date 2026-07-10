@@ -54,23 +54,55 @@ function effortKey(f) {
   return typeof e === 'number' ? e : Infinity;
 }
 
-// One action line, rendered mechanically from `next_step` (spec §6). Checkbox first (the feedback
-// touch-point), bold verb-first summary, `~N min` when estimated, the copy-pasteable command block
-// when present, and an anchor link into Details. When a `next_step.summary` stands in for the
-// title, the title becomes the one-sentence "why". Evidence and the human-visible id live only in
-// Details — the reader meets the action here, never the code. (Richer grammar/bundling: Story 8.3.)
-function renderActionLine(f, lines) {
+// Group the (already-sorted, already-capped) shown findings into action-line groups (FR59, spec P7):
+// findings whose `next_step.command` is BYTE-IDENTICAL merge into one group; every other finding
+// (distinct command, or no command at all) is its own singleton group. Exact string equality only —
+// never a similarity judgment. A group takes the position of its FIRST (top-ranked) member, so the
+// first action can itself be a bundle. First-occurrence order is preserved for determinism (NFR8):
+// the group order, and the id order within a group, follow the input `shown` order verbatim.
+function bundleGroups(shown) {
+  const groups = [];
+  const byCommand = new Map(); // command string → the open group collecting that exact command
+  for (const f of shown) {
+    const cmd = f.next_step && f.next_step.command;
+    if (cmd) {
+      const g = byCommand.get(cmd);
+      if (g) { g.push(f); continue; }
+      const ng = [f];
+      byCommand.set(cmd, ng);
+      groups.push(ng);
+    } else {
+      groups.push([f]); // no command → never bundles
+    }
+  }
+  return groups;
+}
+
+// One action line, rendered mechanically from a GROUP of findings sharing a `next_step.command`
+// (spec §6/P5, P7). The representative (first, top-ranked) member supplies the summary, effort,
+// command block, and Details anchor; a bundle of N>1 makes its size visible with a ` (N items)`
+// suffix on the bold summary and lists every covered id in its manifest. Checkbox first (the
+// feedback touch-point), bold verb-first summary, `~N min` when estimated, the copy-pasteable
+// command block when present, and an anchor link into Details. When a `next_step.summary` stands in
+// for the title, the title becomes the one-sentence "why". Evidence and the human-visible ids live
+// only in Details — the reader meets the action here, never the code. A group of one renders exactly
+// as a lone finding did (byte-identical), so the count suffix is empty and the manifest holds one id.
+function renderActionLine(group, lines) {
+  const f = group[0];
   const ns = f.next_step || {};
   const effort = typeof ns.effort_min === 'number' ? ` — ~${ns.effort_min} min` : '';
   const anchor = `→ [details](#${detailsAnchor(f)})`;
   const why = (ns.summary && f.title && f.title !== ns.summary) ? ` ${f.title.replace(/\s+$/, '')}.` : '';
+  const count = group.length > 1 ? ` (${group.length} items)` : '';
+  const summary = `${actionSummary(f)}${count}`;
   // The id manifest is invisible in rendered Markdown but is how backfill/review map a checked box
-  // back to its finding (feedback.js) — one id per line here, a list once bundling lands (8.3).
-  const ids = `<!-- ids: ${f.id} -->`;
+  // back to its finding(s) (feedback.js) — a comma-separated list, in first-occurrence order, so one
+  // bundled checkbox fans out to every covered id (FR60).
+  const ids = `<!-- ids: ${group.map((g) => g.id).join(', ')} -->`;
   if (ns.command) {
-    lines.push(`- [ ] **${actionSummary(f)}**${effort}: ${ids}`, '', `      ${ns.command}`, '', `  ${why ? why.trim() + ' ' : ''}${anchor}`);
+    lines.push(`- [ ] **${summary}**${effort}: ${ids}`, '', `      ${ns.command}`, '', `  ${why ? why.trim() + ' ' : ''}${anchor}`);
   } else {
-    lines.push(`- [ ] **${actionSummary(f)}**${effort}.${why} ${anchor} ${ids}`);
+    lines.push(`- [ ] **${summary}**${effort}.${why} ${anchor} ${ids}`);
   }
 }
 
@@ -186,16 +218,22 @@ function collect(root, date, { force = false } = {}) {
   // Status line — one bold sentence answering "is anything on fire?" before anything else.
   L.push(deriveStatusLine(shown, runStatus), '');
 
-  // ▶ First action — exactly one (the top-ranked shown finding), fully renderable without reading on.
-  const first = shown[0] || null;
+  // Bundle same-remedy findings into action-line groups AFTER the cap (bundling is a rendering step;
+  // the cap already counted the underlying findings). A group takes its first member's rank, so the
+  // top-ranked group is the First action and the rest keep interleave-priority order.
+  const groups = bundleGroups(shown);
+
+  // ▶ First action — exactly one action line (the top-ranked group, which may be a bundle), fully
+  // renderable without reading on.
+  const first = groups[0] || null;
   L.push('## ▶ First action');
   if (first) renderActionLine(first, L); else L.push('- Nothing needs you today.');
   L.push('');
 
-  // If you have energy after that — the remaining shown findings as action lines, same grammar.
-  const rest = shown.slice(1);
+  // If you have energy after that — the remaining action-line groups, same grammar.
+  const rest = groups.slice(1);
   L.push('## If you have energy after that');
-  if (rest.length) for (const f of rest) renderActionLine(f, L); else L.push('- Nothing else right now.');
+  if (rest.length) for (const g of rest) renderActionLine(g, L); else L.push('- Nothing else right now.');
   L.push('');
 
   // Where you stand — release position, then a pointer to the tracker (never its status-entry text).

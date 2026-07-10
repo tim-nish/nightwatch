@@ -27,6 +27,27 @@ function brief(ids) {
   ].join('\n');
 }
 
+// A brief whose single action line is a BUNDLE covering all `ids` (one checkbox, one manifest
+// listing every id) — as collect-brief renders a group sharing one next_step.command (Story 8.3).
+function bundledBrief(ids) {
+  return [
+    `# Nightwatch — ${DATE}`, '',
+    '## Details',
+    `- [ ] **bundle (${ids.length} items)** → [details](#d-${ids[0]}) <!-- ids: ${ids.join(', ')} -->`,
+    '', '---', '_Review interactively with `/nightwatch review` — or mark boxes by hand._', '',
+  ].join('\n');
+}
+
+/** A repo with a MORNING.md + matching dated brief holding the given brief text. */
+function repoWithText(text) {
+  const root = tmpRepo();
+  gitInit(root);
+  write(root, '.nightwatch/MORNING.md', text);
+  write(root, `.nightwatch/briefs/${DATE}.md`, text);
+  commit(root, 'init');
+  return root;
+}
+
 /** A repo with a MORNING.md + matching dated brief holding the given finding ids. */
 function repoWithBrief(ids) {
   const root = tmpRepo();
@@ -118,6 +139,43 @@ module.exports = {
     assert.strictEqual(recorded.length, 1, 'backfill recorded the hand-marked box');
     const res = applyReview(root, 'rc-2', 'acted-on', store); // now review the same finding
     assert.strictEqual(res.status, 'noop', 'review of an already-backfilled box is a no-op');
+  },
+
+  // ---- bundle fan-out: one checkbox, one row per covered id, idempotent both orders ----------
+  'review: marking one id of a bundled line fans out to every covered id and flips the single box (FR60)': () => {
+    const root = repoWithText(bundledBrief(['rc-1', 'rc-2', 'rc-3']));
+    const store = fakeStore();
+    // Mark via ANY covered id — it resolves to the whole line.
+    const res = applyReview(root, 'rc-2', 'acted-on', store);
+    assert.deepStrictEqual(res, { status: 'recorded', id: 'rc-2', verdict: 'acted-on', date: DATE }, 'reports the passed id');
+    // One row per covered id, in manifest (first-occurrence) order.
+    assert.deepStrictEqual(store.rows.map((x) => x.id), ['rc-1', 'rc-2', 'rc-3'], 'fan-out: one row per covered id');
+    // The single line's box flipped in BOTH files.
+    assert.ok(/- \[x\].*<!-- ids: rc-1, rc-2, rc-3 -->/.test(readFile(root, '.nightwatch/MORNING.md')), 'MORNING.md box set');
+    assert.ok(/- \[x\].*<!-- ids: rc-1, rc-2, rc-3 -->/.test(readFile(root, `.nightwatch/briefs/${DATE}.md`)), 'dated brief box set');
+    // Re-applying (via any covered id) is a stated no-op — no duplicate rows.
+    assert.strictEqual(applyReview(root, 'rc-1', 'acted-on', store).status, 'noop', 're-mark is a no-op');
+    assert.strictEqual(store.rows.length, 3, 'no duplicate rows');
+    // listFindings/listUnmarked present the bundle as ONE entry carrying every id.
+    const listed = listFindings(readFile(root, '.nightwatch/MORNING.md'));
+    assert.strictEqual(listed.length, 1, 'a bundle is one question');
+    assert.deepStrictEqual(listed[0].ids, ['rc-1', 'rc-2', 'rc-3'], 'entry carries every covered id');
+    assert.strictEqual(listed[0].id, 'rc-1', 'representative id is the first covered id');
+  },
+
+  'review of a bundle then backfill records no duplicates (fan-out composes; both orders) (FR60)': () => {
+    // review → backfill
+    const a = repoWithText(bundledBrief(['rc-1', 'rc-2', 'rc-3']));
+    let store = openTracker(a, loadConfig(a).config);
+    assert.strictEqual(applyReview(a, 'rc-1', 'dismissed', store).status, 'recorded');
+    assert.strictEqual(store.readLedger().filter((r) => r.type === 'feedback').length, 3, 'three fanned-out rows');
+    assert.strictEqual(backfillFeedback(a, store).length, 0, 'backfill after review adds nothing');
+
+    // backfill (hand-marked) → review
+    const b = repoWithText(bundledBrief(['rc-4', 'rc-5', 'rc-6']).replace('- [ ] **bundle', '- [x] **bundle'));
+    store = openTracker(b, loadConfig(b).config);
+    assert.strictEqual(backfillFeedback(b, store).length, 3, 'backfill of a hand-marked bundle records three');
+    assert.strictEqual(applyReview(b, 'rc-5', 'acted-on', store).status, 'noop', 'review of an already-backfilled bundle is a no-op');
   },
 
   // ---- CLI: --list is read-only; --id/--mark records ----------------------------------------

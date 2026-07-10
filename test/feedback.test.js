@@ -75,6 +75,33 @@ module.exports = {
     assert.strictEqual(openTracker(r).readLedger().filter((x) => x.type === 'feedback').length, 2);
   },
 
+  // Story 8.3 / FR60 — marking a BUNDLED action line fans out to one feedback row per covered id,
+  // and a second backfill records nothing new (per-id idempotency).
+  'feedback: marking a bundled action fans out one row per covered id, idempotently (FR60)': () => {
+    const r = tmpRepo();
+    const date = '2001-06-01';
+    const cmd = 'nightwatch init --update';
+    writeFindings(r, 'repo-reconcile', date, [], [
+      finding('RC-f1', { next_step: { summary: 'Classify folders', command: cmd } }),
+      finding('RC-f2', { next_step: { summary: 'Classify folders', command: cmd } }),
+      finding('RC-f3', { next_step: { summary: 'Classify folders', command: cmd } }),
+    ]);
+    collect(r, date);
+    // Sanity: the three findings rendered as ONE bundled action line.
+    const brief = readFile(r, '.nightwatch/MORNING.md');
+    assert.ok(/<!-- ids: RC-f1, RC-f2, RC-f3 -->/.test(brief), 'the three findings bundled into one line');
+
+    markBox(r, 'RC-f1', 'x'); // one checkbox stands for all three
+    const first = backfillFeedback(r, openTracker(r));
+    assert.strictEqual(first.length, 3, 'one feedback row per covered id');
+    assert.deepStrictEqual(first.map((m) => m.id).sort(), ['RC-f1', 'RC-f2', 'RC-f3'], 'all covered ids recorded');
+    assert.ok(first.every((m) => m.verdict === 'acted-on' && m.date === date), 'row shape/date');
+
+    const second = backfillFeedback(r, openTracker(r));
+    assert.strictEqual(second.length, 0, 'a second backfill records zero new rows');
+    assert.strictEqual(openTracker(r).readLedger().filter((x) => x.type === 'feedback').length, 3, 'exactly three feedback rows total');
+  },
+
   'feedback: no previous MORNING.md → backfill is a clean no-op': () => {
     const r = tmpRepo();
     assert.deepStrictEqual(backfillFeedback(r, openTracker(r)), []);

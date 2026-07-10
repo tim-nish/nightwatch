@@ -141,6 +141,69 @@ module.exports = {
     assert.ok(!/0\.38%/.test(brief), 'must never print the raw fraction as a percent');
   },
 
+  // Story 8.3 / FR59 — findings whose next_step.command is byte-identical bundle into ONE action
+  // line whose manifest lists every id and whose summary shows the count; the cap still counts the
+  // underlying findings, and each finding keeps its own Details block.
+  'brief: same-command findings bundle into one action line; cap counts the underlying findings (FR59)': () => {
+    const r = tmpRepo();
+    const date = '2000-08-01';
+    const cmd = 'nightwatch init --update';
+    writeFindings(r, 'repo-reconcile', date, [], [
+      { id: 'RC-b1', kind: 'drift', severity: 2, title: 'new dir foo', evidence: [], action: 'none', verified: true, next_step: { summary: 'Tell Nightwatch about new folders', command: cmd, effort_min: 1 } },
+      { id: 'RC-b2', kind: 'drift', severity: 2, title: 'new dir bar', evidence: [], action: 'none', verified: true, next_step: { summary: 'Tell Nightwatch about new folders', command: cmd, effort_min: 1 } },
+      { id: 'RC-b3', kind: 'drift', severity: 2, title: 'new dir baz', evidence: [], action: 'none', verified: true, next_step: { summary: 'Tell Nightwatch about new folders', command: cmd, effort_min: 1 } },
+    ]);
+    const res = collect(r, date);
+    // The cap counts the 3 underlying findings, NOT the 1 rendered line.
+    assert.strictEqual(res.total, 3, 'cap counts underlying findings');
+    assert.strictEqual(res.shown, 3, 'shown counts underlying findings, not rendered lines');
+    const brief = readFile(r, '.nightwatch/MORNING.md');
+    const actionLines = brief.split('\n').filter((l) => /^- \[ \]/.test(l));
+    assert.strictEqual(actionLines.length, 1, 'three same-command findings render as ONE action line');
+    assert.ok(/<!-- ids: RC-b1, RC-b2, RC-b3 -->/.test(brief), 'manifest lists all three ids in first-occurrence order');
+    assert.ok(/\*\*Tell Nightwatch about new folders \(3 items\)\*\*/.test(brief), 'summary shows the bundle count');
+    // The command block renders exactly once.
+    assert.strictEqual(brief.split('\n').filter((l) => l === `      ${cmd}`).length, 1, 'command block renders once');
+    // Each underlying finding still gets its own Details block (bundling is only the action line).
+    for (const id of ['RC-b1', 'RC-b2', 'RC-b3']) assert.ok(brief.includes(`id \`${id}\``), `${id} keeps its own Details block`);
+  },
+
+  // Story 8.3 / FR59 — bundling is exact command equality only: distinct commands never merge, and
+  // findings with no command never bundle (each is its own line), even with identical summaries.
+  'brief: distinct commands and no-command findings never bundle (FR59)': () => {
+    const r = tmpRepo();
+    const date = '2000-08-02';
+    writeFindings(r, 'repo-reconcile', date, [], [
+      { id: 'RC-c1', kind: 'drift', severity: 2, title: 't1', evidence: [], action: 'none', verified: true, next_step: { summary: 'Fix one', command: 'cmd-one' } },
+      { id: 'RC-c2', kind: 'drift', severity: 2, title: 't2', evidence: [], action: 'none', verified: true, next_step: { summary: 'Fix two', command: 'cmd-two' } },
+      { id: 'RC-c3', kind: 'drift', severity: 2, title: 't3', evidence: [], action: 'none', verified: true, next_step: { summary: 'Same summary' } },
+      { id: 'RC-c4', kind: 'drift', severity: 2, title: 't4', evidence: [], action: 'none', verified: true, next_step: { summary: 'Same summary' } },
+    ]);
+    const res = collect(r, date);
+    assert.strictEqual(res.shown, 4, 'four findings shown');
+    const brief = readFile(r, '.nightwatch/MORNING.md');
+    const actionLines = brief.split('\n').filter((l) => /^- \[ \]/.test(l));
+    assert.strictEqual(actionLines.length, 4, 'distinct-command and no-command findings each get their own line');
+    assert.ok(!/\(\d+ items\)/.test(brief), 'no bundle count suffix when nothing bundles');
+  },
+
+  // Story 8.3 / FR59, NFR8 — a brief containing a bundle renders byte-identically across two runs.
+  'brief: a brief containing a bundle is byte-deterministic across runs (FR59, NFR8)': () => {
+    const r = tmpRepo();
+    const date = '2000-08-03';
+    const cmd = 'nightwatch init --update';
+    writeFindings(r, 'repo-reconcile', date, [], [
+      { id: 'RC-d1', kind: 'drift', severity: 2, title: 'd1', evidence: [], action: 'none', verified: true, next_step: { summary: 'Bundle it', command: cmd } },
+      { id: 'RC-d2', kind: 'drift', severity: 2, title: 'd2', evidence: [], action: 'none', verified: true, next_step: { summary: 'Bundle it', command: cmd } },
+      { id: 'RC-d3', kind: 'drift', severity: 2, title: 'd3', evidence: [], action: 'none', verified: true, next_step: { summary: 'Bundle it', command: cmd } },
+    ]);
+    collect(r, date);
+    const first = readFile(r, '.nightwatch/MORNING.md');
+    assert.ok(/<!-- ids: RC-d1, RC-d2, RC-d3 -->/.test(first), 'bundle rendered');
+    collect(r, date);
+    assert.strictEqual(readFile(r, '.nightwatch/MORNING.md'), first, 'byte-identical across runs');
+  },
+
   'brief: global cap enforced, overflow to appendix by priority class': () => {
     const r = tmpRepo();
     const date = '2000-02-01';
