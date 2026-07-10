@@ -118,12 +118,17 @@ member left out (with its `next_due` date); `steps` is `due…` followed by `col
    `caps.brief_total` (default 25) with interleave priority (blockers > human decisions > drift >
    arch > nice-to-have) are enforced by the script, not by you.
 
-5. **Morning feedback loop.** Before running the jobs, backfill last brief's checkbox marks:
-   read the previous `MORNING.md`, and for each item the user checked (`[x]`), set `acted_on:
-   true` on the matching `type:"finding"` row for that id in `ledger.jsonl` (append a correction
-   row). The demotion rule (a member with zero acted-on findings two runs running) is then
-   computed by `collect-brief.js` and surfaced in the next brief — the system proposes pruning
-   itself.
+5. **Morning feedback loop.** **Before running the jobs**, backfill last brief's checkbox marks:
+   ```
+   node ${NW_ROOT}/scripts/backfill-feedback.js --repo .
+   ```
+   This reads the previous `.nightwatch/MORNING.md` and, for each rendered finding whose box the
+   user checked (`[x]` → acted-on; `[-]`/`[~]` → dismissed), appends one `type:"feedback"`
+   correction row for that finding id to `ledger.jsonl` **through the tracking store's
+   `recordFeedback()`** (the sole sanctioned ledger writer) — dated to the brief being marked, and
+   skipping marks already recorded so a re-run never double-counts. The demotion rule (a member
+   with zero acted-on findings two runs running) then folds these marks in when `collect-brief.js`
+   computes it, surfacing the flag in the next brief — the system proposes pruning itself.
 
 6. **Update `state.json`.** Run the scheduler once more without `--plan` to advance the cadence
    cursors (`last_run`, `runs`, `next_due`) for the members that ran and stamp `last_brief_date`:

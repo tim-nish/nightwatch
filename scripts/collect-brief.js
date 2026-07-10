@@ -55,13 +55,19 @@ function readReleaseHeader(root) {
 // already-open store is threaded in by collect(), otherwise a read-only markdown store is opened.
 function computeDemotions(root, store) {
   const rows = (store || openTracker(root)).readLedger();
+  // Acted-on reaches the ledger two ways: stamped directly on a finding row (`acted_on:true`), or —
+  // the normal morning-feedback path — as a `type:"feedback"` row backfilled from a checked brief box
+  // (backfill-feedback.js → recordFeedback, verdict `acted-on`). Fold the feedback marks in by id so
+  // the demotion query counts a finding as acted-on whichever way the mark was recorded (FR35).
+  const actedIds = new Set();
+  for (const r of rows) if (r.type === 'feedback' && /^acted/.test(String(r.verdict))) actedIds.add(r.id);
   const flags = [];
   for (const job of MEMBER_JOBS) {
     const byDate = new Map();
     for (const r of rows) {
       if (r.type !== 'finding' || r.job !== job) continue;
       const d = byDate.get(r.date) || { total: 0, acted: 0 };
-      d.total++; if (r.acted_on === true) d.acted++;
+      d.total++; if (r.acted_on === true || actedIds.has(r.id)) d.acted++;
       byDate.set(r.date, d);
     }
     const dates = [...byDate.keys()].sort().slice(-2);
@@ -141,7 +147,7 @@ function collect(root, date, { force = false } = {}) {
   L.push('## Appendix (overflow — ids only)');
   if (overflow.length) L.push('- ' + overflow.map((f) => `\`${f.id}\``).join(', ')); else L.push('- none');
   L.push('');
-  L.push('---', `_Check a box (\`[x]\`) to mark acted-on; the next run backfills the ledger. Total findings: ${all.length}, shown: ${included.size}, cap: ${cap}._`);
+  L.push('---', `_Check a box (\`[x]\`) to mark acted-on, or \`[-]\` to dismiss; the next run backfills the ledger. Total findings: ${all.length}, shown: ${included.size}, cap: ${cap}._`);
 
   const briefText = L.join('\n') + '\n';
 
