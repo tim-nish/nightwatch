@@ -4,13 +4,16 @@
   signals-only `--dry-run` tier in P5 remains **deferred**, not accepted. **P7 (first-run
   confirmation-screen refinements)** is a second-round addition from finding 0007 — accepted
   2026-07-10 and **folded into `nightwatch.md` §6 (FR45–FR47)**; implementation pending
-  (Epic 7 candidate).
+  (Epic 7 candidate). **P8 (repository-agnostic interview presentation)** is a fourth-round
+  addition from finding 0012 — accepted 2026-07-10; implementation pending.
 - **Motivated by:** dogfooding findings
   [0001 — First run gives no visibility](../dogfooding/0001-first-run-visibility.md),
-  [0005 — No preview of analysis scope](../dogfooding/0005-analysis-scope-preview.md), and
-  [0007 — First-run confirmation screen UX](../dogfooding/0007-first-run-confirmation-ux.md) (P7)
-- **Scope:** presentation and consent around the overnight flow in `commands/nightwatch.md`.
-  No change to what the jobs analyze, what they write, or the deterministic scheduler.
+  [0005 — No preview of analysis scope](../dogfooding/0005-analysis-scope-preview.md),
+  [0007 — First-run confirmation screen UX](../dogfooding/0007-first-run-confirmation-ux.md) (P7),
+  and [0012 — Phase selection leaks Nightwatch's own state](../dogfooding/0012-phase-selection-leaks-own-state.md) (P8)
+- **Scope:** presentation and consent around the overnight flow in `commands/nightwatch.md`, plus
+  the presentation of the `/nightwatch init` interview (P8). No change to what the jobs analyze,
+  what they write, or the deterministic scheduler.
 
 ## Problem
 
@@ -208,9 +211,38 @@ Untracked files that would otherwise be analyzed:
   classifies loose *untracked files* at the first-run gate. Both keep exclusion a human-confirmed
   declaration, never a silent inference.
 
+### P8 — Repository-agnostic interview presentation
+
+Motivated by finding [0012](../dogfooding/0012-phase-selection-leaks-own-state.md). `/nightwatch
+init` configures **the repository it is pointed at** — never Nightwatch itself. Its interview must
+present every prompt in terms of that target repository, described generically, and must never leak
+Nightwatch's own development state. Observed leak: the **phase** step described the project with
+Nightwatch's own milestone (*"Epic 6 packaging just landed"*) while configuring an unrelated repo.
+Presentation only — this changes no declaration the interview gathers, no scheduling decision, and
+no write.
+
+**P8.1 — Describe the phase in generic, repository-agnostic terms.** When helping the human choose
+`phase:` (`prototype` / `building` / `hardening` / `released`), illustrate each value with a generic
+description of *their* project's maturity — e.g. *"Preparing the first public release"* for
+`hardening`/`released`, *"Actively building toward a first version"* for `building`,
+*"Early prototype, shape still moving"* for `prototype`. Never illustrate a phase with a
+Nightwatch-specific milestone.
+
+**P8.2 — Never reference Nightwatch's own epics, packaging, versions, or milestones** in any
+user-facing interview or confirmation text. Nightwatch is the tool; the repository it was pointed at
+is the subject. Any concrete example must be generic or drawn from the *target* repository (its
+detected modules, its declared release target), never from Nightwatch's own lifecycle.
+
+**P8.3 — Apply the principle to the whole interview, not just phase.** The same repository-agnostic
+rule governs the authority, release-target, and definition-of-done prompts: describe and exemplify
+them in terms of the repository being configured, so the leak cannot recur wherever the interview
+narrates by example.
+
 ## Non-goals
 
 - No change to cadence, budgets, member order, brief assembly, or the ledger.
+- No leaking of Nightwatch's own development state (epics, packaging, versions) into any target
+  repository's interview or confirmation surface (P8).
 - No persistent progress UI or background polling infrastructure.
 - No confirmation prompts on scheduled runs, ever.
 - No cost *accounting* (billing integration); estimates come only from config ceilings and
@@ -241,3 +273,6 @@ Untracked files that would otherwise be analyzed:
 10. When the screen proposes excluding untracked files, they are shown in at least two groups —
     likely temporary/crash artifacts vs ordinary untracked documents — acceptable independently
     (P7.4).
+11. The `/nightwatch init` interview describes every prompt — the phase step in particular — in
+    generic, repository-agnostic terms about the repository being configured, and never references
+    Nightwatch's own epics, packaging, versions, or milestones (P8).

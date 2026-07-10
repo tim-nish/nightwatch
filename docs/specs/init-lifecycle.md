@@ -5,8 +5,10 @@
   (Epic 7 candidate). **Depends on** [file-layout](file-layout.md)
   (0008): `--update` reads and writes declarations at their resolved locations
   (`.nightwatch/STATE.md`, the configured `release_path`).
-- **Motivated by:** dogfooding finding
-  [0006 — `init` has no lifecycle](../dogfooding/0006-init-lifecycle-unclear.md)
+- **Motivated by:** dogfooding findings
+  [0006 — `init` has no lifecycle](../dogfooding/0006-init-lifecycle-unclear.md) and
+  [0013 — Config-drift nudge false positives](../dogfooding/0013-config-drift-false-positives.md)
+  (P4 refinement)
 - **Scope:** the lifecycle of `/nightwatch init` — what re-running does, how the user keeps
   declarations in sync as the repo evolves, and how drift is surfaced. No change to what the member
   jobs analyze or to the overnight write surface beyond one new brief line.
@@ -90,6 +92,28 @@ sees a **new top-level directory no declaration classifies** (neither product-de
 warranted instead of guessing. Detection + reporting only; the overnight run writes no declarations
 (constraint 2).
 
+**P4.1 — Refinement: distinguish implicit product from unknown, and don't nag (finding 0013).** As
+shipped (FR53 / Story 7.5), the nudge fires for *every* tracked top-level directory that is not on
+the small generic product allowlist (`src`, `lib`, `test`, `docs`, …) and not authority-declared —
+so a repo whose product directories are named otherwise (`.claude-plugin/`, `config/`, `skills/`,
+`packages/`, `apps/`, …) is nagged **every night** about directories that are already being analyzed
+as product and are correct as-is. That is recurring, non-actionable noise, and it trains the user to
+ignore the section that was meant to catch a genuinely new directory. The refinement:
+
+- **A directory analyzed-as-product-by-default with no signal of being misclassified is _implicit
+  product_, not drift.** "Not explicitly declared" is not the same as "unclassified" — the correct
+  steady state for such a directory is exactly to be analyzed as product, so it must not be flagged.
+- **Narrow the trigger to actionable cases.** Prefer firing only for a directory that looks
+  *dev-tooling-shaped but is undeclared* (reuse `init --update`'s existing `dev_tooling`-candidate
+  detection: referenced-by-no-product-import / convention match), or one that is genuinely new —
+  rather than every non-allowlisted product directory.
+- **Don't recur.** Surface a given directory at most once (or only while it is genuinely new); a
+  persistent nightly line with no new information is noise, not a signal. Where analyze-as-product is
+  the intended default, leave genuine reclassification to `init --update`'s interactive, on-demand
+  detection rather than an overnight nag.
+
+Detection + reporting only, as before; the overnight run still writes no declarations.
+
 ## Non-goals
 
 - No automatic or unattended reclassification / declaration editing — `--update` is human-confirmed
@@ -97,6 +121,8 @@ warranted instead of guessing. Detection + reporting only; the overnight run wri
 - No content rewriting beyond confirmed diffs; no reformatting of hand-edited declaration text.
 - No re-interview by default (only proposed changes); the full redo is opt-in.
 - No change to cadence, budgets, member order, brief assembly, or the ledger.
+- No recurring, non-actionable drift nags — the nudge must not repeat a directory that is correct as
+  implicit product, night after night (P4.1, finding 0013).
 
 ## Acceptance criteria
 
@@ -111,6 +137,9 @@ warranted instead of guessing. Detection + reporting only; the overnight run wri
    NFR4 unchanged).
 5. An overnight run that encounters a new unclassified top-level directory emits exactly one brief
    line naming it and pointing at `init --update`; a fully-classified repo emits no such line.
+6. The drift nudge does **not** flag a directory that is already analyzed as product by default and
+   shows no signal of being misclassified (implicit product), and it does not repeat the same
+   directory night after night with no new information (P4.1, finding 0013).
 
 ## Tests
 
