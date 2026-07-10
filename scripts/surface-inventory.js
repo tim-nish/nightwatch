@@ -8,6 +8,7 @@
 const path = require('path');
 const { parseArgs, repoRoot, todayISO, walkFiles, readFileSafe, exists, readJSONSafe, topSegment, writeJSON, outDir } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
+const { analysisExcludeGlobs } = require('./lib/scope');
 
 function detectEcosystem(root) {
   if (exists(path.join(root, 'package.json'))) return 'node';
@@ -115,7 +116,7 @@ function pythonExtractor(root, files) {
 
 function inventory(root) {
   const { config } = loadConfig(root);
-  const files = walkFiles(root, config.ignore);
+  const files = walkFiles(root, analysisExcludeGlobs(config));
   const eco = detectEcosystem(root);
   const degraded = [];
   // FR36: a broken build / unparsable surface is captured here as a `blocking` failure — a

@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const { readFileSafe } = require('./util');
+const { DEFAULT_IGNORE, DEFAULT_DEV_TOOLING, extendGlobs } = require('./scope');
 
 /** @typedef {import('./types').Config} Config */
 /** @typedef {import('./types').LoadedConfig} LoadedConfig */
@@ -16,7 +17,12 @@ const DEFAULTS = Object.freeze({
   budget_tokens: { 'repo-reconcile': 200000, 'arch-review': 300000, 'release-progress': 100000 },
   effort: { 'repo-reconcile': 'medium', 'arch-review': 'high', 'release-progress': 'medium' },
   caps: { brief_total: 25, reconcile: 10, arch_candidates: 7 },
-  ignore: ['dist/**', 'vendor/**', 'node_modules/**', '.git/**'],
+  // Two-tier analysis scoping (FR42). Shipped defaults live in scope.js; user lists in
+  // config.yaml/STATE.md EXTEND these rather than replace them, and loadConfig resolves the
+  // extended lists below. `ignore` = never look; `dev_tooling` = develops the product but is
+  // not the product.
+  ignore: DEFAULT_IGNORE.slice(),
+  dev_tooling: DEFAULT_DEV_TOOLING.slice(),
   extractors: 'auto',
   layers: [],
   release_checks: { disable: [] },
@@ -57,14 +63,21 @@ function loadConfig(root) {
   const degraded = [];
   const config = clone(DEFAULTS);
   const sources = { config_yaml: false, state_md: false };
+  // Raw user scoping lists, captured before deepMerge (which would replace the arrays). The two
+  // scoping tiers EXTEND their shipped defaults instead of replacing them (FR42), so they are
+  // resolved separately at the end. STATE.md wins over config.yaml, matching every other key.
+  let rawIgnore, rawDevTooling;
 
   const cfgPath = path.join(root, '.nightwatch', 'config.yaml');
   const cfgText = readFileSafe(cfgPath);
   if (cfgText != null) {
     try {
       const parsed = yaml.load(cfgText);
-      if (isPlainObject(parsed)) { deepMerge(config, parsed); sources.config_yaml = true; }
-      else if (parsed != null) degraded.push('.nightwatch/config.yaml is not a mapping; ignored');
+      if (isPlainObject(parsed)) {
+        if (parsed.ignore !== undefined) rawIgnore = parsed.ignore;
+        if (parsed.dev_tooling !== undefined) rawDevTooling = parsed.dev_tooling;
+        deepMerge(config, parsed); sources.config_yaml = true;
+      } else if (parsed != null) degraded.push('.nightwatch/config.yaml is not a mapping; ignored');
     } catch (e) { degraded.push('.nightwatch/config.yaml unparseable: ' + e.message); }
   }
 
@@ -78,10 +91,17 @@ function loadConfig(root) {
     if (typeof state.phase === 'string') phase = state.phase;
     if (isPlainObject(state.release)) release = state.release;
     // config.yaml keys may also appear in STATE.md for the operational knobs; STATE wins.
-    for (const k of ['layers', 'ignore', 'caps', 'cadence', 'extractors']) {
+    for (const k of ['layers', 'ignore', 'dev_tooling', 'caps', 'cadence', 'extractors']) {
       if (state[k] !== undefined) { const patch = {}; patch[k] = state[k]; deepMerge(config, patch); }
     }
+    if (state.ignore !== undefined) rawIgnore = state.ignore;
+    if (state.dev_tooling !== undefined) rawDevTooling = state.dev_tooling;
   }
+
+  // Resolve the two scoping tiers: user lists extend the shipped defaults, `!pattern` re-includes
+  // a default-excluded path (FR42). An absent key yields the defaults verbatim.
+  config.ignore = extendGlobs(DEFAULT_IGNORE, rawIgnore);
+  config.dev_tooling = extendGlobs(DEFAULT_DEV_TOOLING, rawDevTooling);
 
   return {
     config,

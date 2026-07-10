@@ -7,7 +7,16 @@ cadence:  {repo-reconcile: nightly, arch-review: weekly, release-progress: night
 budget_tokens: {repo-reconcile: 200000, arch-review: 300000, release-progress: 100000}
 effort:   {repo-reconcile: medium, arch-review: high, release-progress: medium}
 caps:     {brief_total: 25, reconcile: 10, arch_candidates: 7}
-ignore:   ["dist/**", "vendor/**", "node_modules/**", ".git/**"]
+
+# Two-tier analysis scoping. Both lists EXTEND the shipped defaults (below) rather than
+# replacing them; prefix an entry with "!" to re-include a default-excluded path.
+ignore: []                  # never analyzed; extends shipped defaults ("!pattern" re-includes)
+                            # defaults: dist/**, build/**, out/**, vendor/**, node_modules/**,
+                            #           .git/**, coverage/**, **/*.lock, .nightwatch/**
+dev_tooling: []             # develops the product but is not the product; extends shipped defaults
+                            # defaults: _bmad/**, _bmad-output/**, .claude/**, .cursor/**, q_a/**
+                            # excluded from all analysis; exclusions are stated on the brief's
+                            # one-line scope statement, never silently.
 extractors: auto            # or a list, e.g. [node, python]
 layers: []                  # e.g. [{name: core, path: "src/core/**", may_depend_on: []}]
 release_checks: {disable: []}   # e.g. [changelog] ; also: {todo_threshold: 40}

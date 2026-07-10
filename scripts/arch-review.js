@@ -16,6 +16,7 @@
 const path = require('path');
 const { parseArgs, repoRoot, todayISO, walkFiles, topSegment, writeJSON, outDir, readFileSafe } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
+const { analysisExcludeGlobs } = require('./lib/scope');
 const { archSignals } = require('./arch-signals');
 const { extractSignals } = require('./extract-signals');
 const { inventory } = require('./surface-inventory');
@@ -110,7 +111,7 @@ function archReview(root, opts = {}) {
   const date = opts.date || todayISO();
   const { config, phase, authority } = loadConfig(root);
   const cap = (config.caps && Number.isFinite(config.caps.arch_candidates)) ? config.caps.arch_candidates : 7;
-  const allFiles = walkFiles(root, config.ignore || []);
+  const allFiles = walkFiles(root, analysisExcludeGlobs(config));
   const inv = inventory(root);
   const arch = archSignals(root);
   const degraded = [...(arch.degraded || [])];
