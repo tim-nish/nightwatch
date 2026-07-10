@@ -577,7 +577,8 @@ headings, stable item ids, and one human-owned section the machine never touches
 ---
 phase: hardening            # mirrors STATE.md
 target: "v0.1 public release"
-progress: 64                # % of definition-of-done + blockers resolved (derived)
+progress: 0.64              # 0–1 fraction of definition-of-done + blockers resolved (derived);
+                            # stored as a fraction, rendered ×100 as a percent at display time
 updated: 2026-07-08
 ---
 # Release progress
@@ -724,8 +725,9 @@ installation is ever suggested; writes both declaration files (`.nightwatch/STAT
 (never touching the repo's root `.gitignore`); when a legacy root `STATE.md`/`RELEASE.md`
 is present, offers a one-time, human-confirmed, byte-preserving migration into
 `.nightwatch/`; presents the plan, estimate, and scope preview and asks the first-run
-confirmation (this is where most users pay their first full budget); runs each job once in
-dry-run; shows the first brief.
+confirmation (this is where most users pay their first full budget); runs each job once as an
+**initial validation run** (a full `--force` write run — not the deferred signals-only
+`--dry-run`); shows the first brief.
 
 `init` is **create-only for declarations**: it instantiates them only where absent, never
 refreshes an existing declaration, and reports each already-existing one in a single line

@@ -117,8 +117,9 @@ A way to see what Nightwatch would do at near-zero cost, separate from full orch
   gathering, surface inventory) and show raw counts — "reconcile found 41 claimable surface
   items, 3 candidate disagreements" — without launching any judgment/verification subagents.
   Cost: script execution only, no model budget.
-- `/nightwatch init` step 5 (the post-setup dry run) should present the same P1/P2 plan and
-  the P4 confirmation before its full `--force` night, since that is where most first-time
+- `/nightwatch init` step 5 (the post-setup **initial validation run** — a full `--force` write
+  run, distinct from the deferred signals-only `--dry-run` above) should present the same P1/P2
+  plan and the P4 confirmation before its full `--force` night, since that is where most first-time
   users actually pay the first full budget.
 
 ### P6 — Analysis scope preview in the plan

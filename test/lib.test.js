@@ -8,9 +8,26 @@ const {
   makeId, makeFinding, appendLedger, recurrenceCounts,
   writeFindings, readFindings, dedupeFindings, SCHEMA_VERSION,
 } = require('../scripts/lib/findings');
-const { writeJSON, outDir } = require('../scripts/lib/util');
+const { writeJSON, outDir, toFraction, progressPercent } = require('../scripts/lib/util');
 
 module.exports = {
+  // Progress representation contract: internal 0–1 fraction, rendered ×100 at the boundary.
+  'progress: toFraction normalizes to 0–1; progressPercent renders an integer percent': () => {
+    // the reported bug: a 0.38 fraction must render as 38, never 0.38
+    assert.strictEqual(progressPercent(0.38), 38, '0.38 → 38%');
+    assert.strictEqual(progressPercent(0), 0);
+    assert.strictEqual(progressPercent(1), 100, '1.0 fraction → 100%');
+    assert.strictEqual(progressPercent(0.335), 34, 'rounds to the nearest percent');
+    // defensive: a legacy value already in percent (> 1) is shown as-is, not ×100 again
+    assert.strictEqual(progressPercent(64), 64, 'legacy percent 64 → 64%');
+    assert.strictEqual(progressPercent('x'), null, 'non-number → null');
+    // toFraction: legacy percent → fraction; fraction passes through
+    assert.strictEqual(toFraction(64), 0.64, 'legacy 64 → 0.64');
+    assert.strictEqual(toFraction(0.38), 0.38);
+    assert.strictEqual(toFraction(1), 1);
+    assert.strictEqual(toFraction(''), 0, 'non-number → 0');
+  },
+
   'config: absent files → shipped defaults': () => {
     const r = tmpRepo();
     const { config, authority, phase, release, degraded } = loadConfig(r);

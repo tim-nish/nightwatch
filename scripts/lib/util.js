@@ -119,8 +119,31 @@ function topSegment(rel) {
   return i === -1 ? rel : rel.slice(0, i);
 }
 
+// Release-progress representation contract: internally, `progress` is a **0–1 fraction** (0.38 =
+// "38% done"). It is stored as a fraction in RELEASE.md frontmatter and rendered as a percent only
+// at the display boundary — the morning brief and the release-progress section. Keeping the render
+// conversion in one pair of helpers is what stops "0.38" from ever printing as "0.38%".
+
+/** Normalize a stored/read progress value to the 0–1 fraction contract. A legacy value already in
+ * percent (> 1, e.g. a pre-fix `progress: 64`) is divided down; a fraction passes through; a
+ * non-number becomes 0. So 0.38 → 0.38, 64 → 0.64, 1 → 1, "" → 0. */
+function toFraction(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return n > 1 ? n / 100 : n;
+}
+
+/** Render a progress value as an integer percent for display. Defensive against a legacy percent
+ * value (> 1) so both representations show the same number. Returns null for a non-number.
+ * 0.38 → 38, 0 → 0, 1 → 100, legacy 64 → 64. */
+function progressPercent(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return n > 1 ? Math.round(n) : Math.round(n * 100);
+}
+
 module.exports = {
   parseArgs, repoRoot, todayISO, ensureDir, readFileSafe, exists, readJSONSafe,
   writeJSON, outDir, nwDir, git, isGitRepo, commitCount, globToRegExp, makeIgnore,
-  walkFiles, topSegment,
+  walkFiles, topSegment, toFraction, progressPercent,
 };

@@ -76,7 +76,7 @@ to `${NW_ROOT}/scripts/init.js` so setup is reproducible and never improvised.
    pass `--no-config` to write `STATE.md` only. Then help the human fill the freshly written
    declarations from the interview answers (authority, phase, release, layers).
 
-6. **Present the plan and dry-run.** Run the overnight flow below with `--force` (a first-run
+6. **Present the plan and initial validation run.** Run the overnight flow below with `--force` (a first-run
    scheduler call reports `gate.required`). Show the plan, estimate, and scope preview — this is
    where the human first sees the confirmed scope take effect and pays the first full budget — ask
    the first-run confirmation, then run each job once and show the first brief. Stop and let the
