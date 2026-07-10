@@ -3,6 +3,10 @@
 - **Status:** accepted 2026-07-10 — folded into `nightwatch.md` §6 (`review` mode);
   FR44 in the epics requirements inventory. Strictly selection-based — acted-on /
   dismissed / skip are the entire input vocabulary. Implementation pending (Epic 6).
+- **Refined 2026-07-10 by [brief-composition](brief-composition.md) P8:** review walks the
+  brief's rendered *action lines* rather than raw findings — a bundled action is one
+  question, recording one feedback row per covered id (same writer, same per-id
+  idempotency). All constraints and criteria below are otherwise unchanged.
 - **Motivated by:** dogfooding finding
   [0004 — Morning feedback requires manual Markdown editing](../dogfooding/0004-interactive-morning-review.md)
 - **Scope:** a new interactive command surface for providing feedback on brief findings.
