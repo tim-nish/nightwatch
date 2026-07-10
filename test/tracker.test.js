@@ -7,7 +7,7 @@ const { openTracker, itemId } = require('../scripts/lib/tracker');
 
 const TEMPLATE = fs.readFileSync(path.join(__dirname, '..', 'templates', 'RELEASE.md'), 'utf8');
 
-const METHODS = ['listItems', 'upsertItem', 'completeItem', 'appendStatus', 'recordFindings', 'recordFeedback', 'query', 'flush'];
+const METHODS = ['listItems', 'upsertItem', 'completeItem', 'appendStatus', 'recordFindings', 'recordFeedback', 'recordRun', 'query', 'flush'];
 
 // A finding-shaped object for recordFindings (id is what dedupe/ledger key on).
 function finding(id, over) {
@@ -63,6 +63,16 @@ function behavioral(backend) {
       const findingRows = rows.filter((r) => r.type === 'finding');
       assert.strictEqual(findingRows.filter((r) => r.id === 'RC-aaa').length, 1, 'one RC-aaa finding row');
       assert.strictEqual(rows.filter((r) => r.type === 'feedback' && r.id === 'RC-aaa').length, 1);
+    },
+
+    [`${prefix}: recordRun appends a typed per-run ledger line`]: () => {
+      const t = open();
+      const row = t.recordRun({ date: '2000-01-03', job: 'collect-brief', findings: 4, degraded: 1, tokens: 900 });
+      assert.strictEqual(row.type, 'run', 'stamped type:run');
+      const runs = t.readLedger().filter((r) => r.type === 'run' && r.job === 'collect-brief');
+      assert.strictEqual(runs.length, 1);
+      assert.strictEqual(runs[0].findings, 4);
+      assert.strictEqual(runs[0].tokens, 900);
     },
   };
 }
