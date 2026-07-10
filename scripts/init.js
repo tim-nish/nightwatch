@@ -11,11 +11,22 @@
 // (never clobbering an existing declaration), plus adding `.nightwatch/out/` to `.gitignore`.
 //
 // Flags:
-//   (default)   probe + write STATE.md and .nightwatch/config.yaml from templates (if absent).
-//   --probe     probe the adapters only and print the report — writes nothing.
-//   --no-config write STATE.md only (skip .nightwatch/config.yaml).
+//   (default)          probe + write STATE.md and .nightwatch/config.yaml from templates (if absent).
+//   --probe            probe the adapters only and print the report — writes nothing.
+//   --no-config        write STATE.md only (skip .nightwatch/config.yaml).
+//   --detect-dev-tooling  print candidate dev-tooling directories for the human to confirm —
+//                      writes nothing (FR43 detection half).
+//   --dev-tooling a,b  after writing declarations, persist the confirmed dev-tooling set (dir
+//                      names or globs, comma-separated) into config.yaml's `dev_tooling:` (FR43).
 const { parseArgs, repoRoot, isGitRepo } = require('./lib/util');
-const { runInit } = require('./lib/init');
+const { runInit, detectDevToolingCandidates } = require('./lib/init');
+
+/** Split a comma-separated `--dev-tooling` value into trimmed entries; a bare `--dev-tooling` = []. */
+function parseDevTooling(val) {
+  if (val === true) return [];
+  if (typeof val !== 'string') return undefined;
+  return val.split(',').map((s) => s.trim()).filter(Boolean);
+}
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -26,7 +37,17 @@ function main() {
     process.exit(1);
     return;
   }
-  const res = runInit(root, { probeOnly: !!args.probe, config: !args['no-config'] });
+  // Detection is read-only, like --probe: surface candidates for the interview, write nothing.
+  if (args['detect-dev-tooling']) {
+    const candidates = detectDevToolingCandidates(root);
+    process.stdout.write(JSON.stringify({ status: 'ok', candidates }, null, 2) + '\n');
+    return;
+  }
+  const res = runInit(root, {
+    probeOnly: !!args.probe,
+    config: !args['no-config'],
+    devTooling: parseDevTooling(args['dev-tooling']),
+  });
   process.stdout.write(JSON.stringify({ status: 'ok', ...res }, null, 2) + '\n');
 }
 
