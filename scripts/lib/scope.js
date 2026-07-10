@@ -12,6 +12,8 @@
 // never handed to a member job — they cost zero extraction, judgment, and verification tokens.
 // The exclusion is architectural, not an output filter. collect-brief states the exclusions in one
 // line so a wrong scope is visible, never silent.
+const fs = require('fs');
+const path = require('path');
 const { makeIgnore } = require('./util');
 
 // Shipped defaults. Criterion: a recognizable dev-workspace / build convention with a near-zero
@@ -88,7 +90,43 @@ function excludedTopDirs(root, config, listTop) {
   return names.filter((n) => isExcluded(`${n}/__scope_probe__`)).sort();
 }
 
+/**
+ * Deterministic scope preview (FR38): a filesystem walk — **zero model-token cost** — that
+ * classifies every file as analyzed or excluded and tallies file counts per top-level directory.
+ * This is the material an interactive run prints before spending anything, and it is written to
+ * run-status on scheduled runs. `.git` is never descended (a shipped ignore default and always
+ * huge). Once a directory is determined excluded, all descendants are excluded without re-matching
+ * — glob exclusion is inherited, so the matcher runs only down to the first excluded ancestor.
+ * @param {string} root @param {{ignore?: string[], dev_tooling?: string[]}} config
+ * @returns {{ analyzed_files:number, excluded_files:number,
+ *             analyzed:{dir:string,files:number}[], excluded:{dir:string,files:number}[] }}
+ */
+function scopePreview(root, config) {
+  const isExcluded = makeIgnore(analysisExcludeGlobs(config));
+  const analyzed = new Map();
+  const excluded = new Map();
+  const bump = (m, top) => m.set(top, (m.get(top) || 0) + 1);
+  (function rec(dir, relDir, forced) {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.name === '.git') continue;
+      const rel = relDir ? `${relDir}/${e.name}` : e.name;
+      const top = rel.indexOf('/') === -1 ? rel : rel.slice(0, rel.indexOf('/'));
+      // A file matches its own glob; a directory matches via a probe path so `node_modules/**`
+      // catches `node_modules`. Exclusion is inherited once true.
+      const excl = forced || isExcluded(rel) || isExcluded(`${rel}/__scope_probe__`);
+      if (e.isDirectory()) rec(path.join(dir, e.name), rel, excl);
+      else if (e.isFile()) bump(excl ? excluded : analyzed, top);
+    }
+  })(root, '', false);
+  const toArr = (m) => [...m.entries()].map(([dir, files]) => ({ dir, files }))
+    .sort((a, b) => b.files - a.files || a.dir.localeCompare(b.dir));
+  const sum = (m) => [...m.values()].reduce((a, b) => a + b, 0);
+  return { analyzed_files: sum(analyzed), excluded_files: sum(excluded), analyzed: toArr(analyzed), excluded: toArr(excluded) };
+}
+
 module.exports = {
   DEFAULT_IGNORE, DEFAULT_DEV_TOOLING,
-  extendGlobs, analysisExcludeGlobs, excludedTopDirs,
+  extendGlobs, analysisExcludeGlobs, excludedTopDirs, scopePreview,
 };
