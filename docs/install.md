@@ -34,11 +34,15 @@ runtime for every command it runs, so no further setup is needed. Pick whichever
 - **Private git marketplace:** `/plugin marketplace add <git-url>` (HTTPS or SSH, optionally
   pinned with `#branch` or `#tag`). Nothing is published anywhere public.
 
+In this mode Claude Code namespaces the commands by plugin name: **`/nightwatch:nightwatch`**
+(with init as `/nightwatch:nightwatch init`), **`/nightwatch:repo-reconcile`**,
+**`/nightwatch:arch-review`**, **`/nightwatch:release-progress`**.
+
 ### Option B — local symlink (no plugin registration)
 
-Use this if you want the `/nightwatch`, `/repo-reconcile`, `/arch-review`, and
-`/release-progress` commands available as local Claude Code slash commands without registering
-Nightwatch as a plugin.
+Use this if you want the commands available as local Claude Code slash commands without
+registering Nightwatch as a plugin. In this mode they appear un-namespaced — `/nightwatch`,
+`/repo-reconcile`, `/arch-review`, `/release-progress` — since they are plain local commands.
 
 1. Clone or copy this repository somewhere stable, e.g. `~/tools/nightwatch`, and install its
    dependency:
@@ -69,27 +73,28 @@ Nightwatch as a plugin.
 If neither `CLAUDE_PLUGIN_ROOT` nor `NIGHTWATCH_ROOT` is set when a command runs, it stops
 immediately with a setup message instead of guessing a path.
 
-Commands provided:
+Commands provided (plugin-install name — Option B symlink installs get the un-namespaced form):
 
 | Command | Role | Default cadence |
 |---|---|---|
-| `/repo-reconcile` | spec ↔ docs ↔ code consistency | nightly |
-| `/arch-review` | architecture drift & overengineering | weekly |
-| `/release-progress` | maintain `RELEASE.md` | nightly |
-| `/nightwatch` | orchestrator: run what's due, emit one brief | nightly (scheduled entrypoint) |
+| `/nightwatch:repo-reconcile` | spec ↔ docs ↔ code consistency | nightly |
+| `/nightwatch:arch-review` | architecture drift & overengineering | weekly |
+| `/nightwatch:release-progress` | maintain `RELEASE.md` | nightly |
+| `/nightwatch:nightwatch` | orchestrator: run what's due, emit one brief | nightly (scheduled entrypoint) |
 
 ## First run
 
-1. `/nightwatch init` — a daytime, interactive setup that drafts the two optional repo-local
-   files with you present:
+1. `/nightwatch:nightwatch init` (Option B: `/nightwatch init`) — a daytime, interactive
+   setup that drafts the two optional repo-local files with you present:
    - **`STATE.md`** (repo root) — declarations no tool can infer: source-of-truth authority per
      area, project phase, release target and definition of done, optional layering rules.
    - **`.nightwatch/config.yaml`** — operational config (budgets, caps, cadences, ignore globs).
      Every key is optional; an absent or empty file is valid.
 2. Both files are optional. Every command runs with neither and **degrades gracefully**:
    undeclared inputs become one-line setup findings, never guesses.
-3. Schedule `/nightwatch` nightly (e.g. via `/loop` or a cron routine). It runs what's due and
-   writes tomorrow morning's brief to **`.nightwatch/MORNING.md`** — the one file to open.
+3. Schedule `/nightwatch:nightwatch` (Option B: `/nightwatch`) nightly (e.g. via `/loop` or a
+   cron routine). It runs what's due and writes tomorrow morning's brief to
+   **`.nightwatch/MORNING.md`** — the one file to open.
 
 ## What lands in your repo
 
