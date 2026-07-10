@@ -18,8 +18,12 @@
 //                      writes nothing (FR43 detection half).
 //   --dev-tooling a,b  after writing declarations, persist the confirmed dev-tooling set (dir
 //                      names or globs, comma-separated) into config.yaml's `dev_tooling:` (FR43).
+//   --detect-migration print the legacy root artifacts that would move into .nightwatch/ — writes
+//                      nothing (FR50 detection half; the interview confirms before --migrate).
+//   --migrate          relocate the confirmed legacy root artifacts into .nightwatch/ (byte-for-
+//                      byte, `git mv` when tracked) before instantiating declarations (FR50).
 const { parseArgs, repoRoot, isGitRepo } = require('./lib/util');
-const { runInit, detectDevToolingCandidates } = require('./lib/init');
+const { runInit, detectDevToolingCandidates, planMigration } = require('./lib/init');
 
 /** Split a comma-separated `--dev-tooling` value into trimmed entries; a bare `--dev-tooling` = []. */
 function parseDevTooling(val) {
@@ -43,10 +47,17 @@ function main() {
     process.stdout.write(JSON.stringify({ status: 'ok', candidates }, null, 2) + '\n');
     return;
   }
+  // Migration detection is likewise read-only: show what a confirmed --migrate would relocate.
+  if (args['detect-migration']) {
+    const plan = planMigration(root);
+    process.stdout.write(JSON.stringify({ status: 'ok', ...plan }, null, 2) + '\n');
+    return;
+  }
   const res = runInit(root, {
     probeOnly: !!args.probe,
     config: !args['no-config'],
     devTooling: parseDevTooling(args['dev-tooling']),
+    migrate: !!args.migrate,
   });
   process.stdout.write(JSON.stringify({ status: 'ok', ...res }, null, 2) + '\n');
 }

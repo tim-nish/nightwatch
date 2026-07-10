@@ -58,17 +58,18 @@ module.exports = {
     assert.strictEqual(readFile(root, '.nightwatch/config.yaml'), shippedTemplate('config.yaml'));
   },
 
-  'init: registers .nightwatch/out/ in .gitignore, idempotently': () => {
+  'init: ignores out/ via a nested .nightwatch/.gitignore, never the root .gitignore, idempotently': () => {
     const root = tmpRepo();
     gitInit(root); commit(root, 'init');
 
     const first = ensureGitignore(root);
     assert.strictEqual(first.changed, true, 'first call adds the ignore');
-    assert.ok(/^\.nightwatch\/out\/$/m.test(readFile(root, '.gitignore')), '.nightwatch/out/ present');
+    assert.ok(/^out\/$/m.test(readFile(root, '.nightwatch/.gitignore')), 'nested out/ present');
+    assert.strictEqual(readFile(root, '.gitignore'), null, 'root .gitignore never created');
 
     const second = ensureGitignore(root);
     assert.strictEqual(second.changed, false, 'idempotent — no duplicate entry');
-    const occurrences = readFile(root, '.gitignore').split('\n').filter((l) => l.trim() === '.nightwatch/out/').length;
+    const occurrences = readFile(root, '.nightwatch/.gitignore').split('\n').filter((l) => l.trim() === 'out/').length;
     assert.strictEqual(occurrences, 1, 'exactly one out/ ignore line');
   },
 
