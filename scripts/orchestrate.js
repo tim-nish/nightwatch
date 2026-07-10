@@ -11,14 +11,54 @@
 //
 // Modes:
 //   (default)  run bookkeeping: precondition → idempotency gate → plan → record cursors → write
-//              state.json. A second same-night run is a no-op (writes nothing); `--force` repeats.
+//              state.json (and the scope preview into run-status). A second same-night run is a
+//              no-op (writes nothing); `--force` repeats.
 //   --plan     print the plan only and exit; performs no writes (used before running subagents).
-const { parseArgs, repoRoot, todayISO, isGitRepo } = require('./lib/util');
+//
+// The plan it returns is presentation material only (FR37/FR38/FR41): the enriched member list
+// (per-member budget_tokens/effort/timeout_minutes), the skipped members with next_due, a token
+// ceiling + bounded duration estimate, and a deterministic zero-model-token scope preview. Adding
+// or removing any of it changes no scheduling decision — those come from schedule.js alone.
+const path = require('path');
+const { parseArgs, repoRoot, todayISO, isGitRepo, outDir, readJSONSafe, writeJSON } = require('./lib/util');
 const {
   readState, writeState, reconcileState, planRun, alreadyRanTonight, recordRun, markBriefed,
 } = require('./lib/schedule');
 const { loadConfig } = require('./lib/config');
+const { scopePreview } = require('./lib/scope');
 const { writeStubBrief } = require('./collect-brief');
+
+/** Per-member execution parameters, read straight from config (presentation only). */
+function memberDetail(job, config) {
+  const bt = config.budget_tokens && config.budget_tokens[job];
+  const ef = config.effort && config.effort[job];
+  const tm = config.timeout_minutes && typeof config.timeout_minutes === 'object'
+    ? config.timeout_minutes[job]
+    : config.timeout_minutes;
+  return {
+    job,
+    budget_tokens: Number.isFinite(bt) ? bt : null,
+    effort: typeof ef === 'string' ? ef : null,
+    timeout_minutes: Number.isFinite(tm) ? tm : null,
+  };
+}
+
+/**
+ * Enrich a bare schedule plan into the presentation plan an interactive run prints before
+ * launching members (FR37/FR38). The token ceiling and bounded duration are the sums over due
+ * members — members run sequentially, so the duration is a real upper bound. Pure; no I/O beyond
+ * the scope preview's filesystem walk (zero model tokens).
+ */
+function buildPlan(root, config, plan) {
+  const members = plan.due.map((j) => memberDetail(j, config));
+  const token_ceiling = members.reduce((s, m) => s + (m.budget_tokens || 0), 0);
+  const duration_minutes = members.reduce((s, m) => s + (m.timeout_minutes || 0), 0);
+  return {
+    members,
+    estimate: { member_count: members.length, token_ceiling, duration_minutes },
+    scope: scopePreview(root, config),
+  };
+}
 
 /**
  * Deterministic orchestration bookkeeping for one night. Never runs member jobs — it decides and
@@ -48,18 +88,38 @@ function orchestrate(root, date, { force = false, planOnly = false } = {}) {
   // 3. Plan: reconcile state against config cadence, then decide the due members in fixed order.
   const state = reconcileState(onDisk, config);
   const plan = planRun({ state, config, date, force });
+  // Presentation enrichment (FR37/FR38/FR41): member budgets, estimate, and scope preview. Never
+  // influences the scheduling decision above — it is derived from it.
+  const { members, estimate, scope } = buildPlan(root, config, plan);
+  const base = { due: plan.due, skipped: plan.skipped, steps: plan.steps, members, estimate, scope };
 
-  // 4. Record cursors for the members this run covers and stamp the night, then persist. This is
-  //    the only write, and it lands squarely inside `.nightwatch/**`.
+  // --plan is a hard dry path (FR41): return the full plan, print nothing to disk. Zero writes.
+  if (planOnly) return { status: 'plan', ...base };
+
+  // 4. Record cursors for the members this run covers and stamp the night, then persist. state.json
+  //    is the scheduler write; the scope preview is mirrored into run-status so a scheduled run
+  //    (which prints nothing) still records it for the brief (FR38). Both land in `.nightwatch/**`.
   for (const job of plan.due) recordRun(state, job, date);
   markBriefed(state, date);
-
-  if (planOnly) {
-    return { status: 'plan', due: plan.due, skipped: plan.skipped, steps: plan.steps };
-  }
-
   writeState(root, state);
-  return { status: force ? 'forced' : 'ran', due: plan.due, skipped: plan.skipped, steps: plan.steps };
+  writeRunStatusScope(root, date, { scope, estimate });
+
+  return { status: force ? 'forced' : 'ran', ...base };
+}
+
+/**
+ * Mirror the scope preview + estimate into `.nightwatch/out/run-status-<date>.json` without
+ * clobbering the per-member `jobs` the command records there (FR38). Read-modify-write; creates
+ * the file with an empty `jobs` array if absent. Writes only inside the declared surface.
+ */
+function writeRunStatusScope(root, date, { scope, estimate }) {
+  const p = path.join(outDir(root), `run-status-${date}.json`);
+  const cur = readJSONSafe(p);
+  const doc = cur && typeof cur === 'object' ? cur : { jobs: [] };
+  if (!Array.isArray(doc.jobs)) doc.jobs = [];
+  doc.scope = scope;
+  doc.estimate = estimate;
+  writeJSON(p, doc);
 }
 
 function main() {

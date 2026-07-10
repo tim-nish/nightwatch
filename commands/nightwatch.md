@@ -82,11 +82,31 @@ first, then execute exactly the members it lists:
 node ${NW_ROOT}/scripts/orchestrate.js --repo . --plan
 ```
 
-This prints `{ status, due, skipped, steps }`. `status` is `abort` (not a git checkout — emit the
-one-line stub brief and stop), `noop` (a completed run already exists tonight and `--force` was not
-passed — read `state.json` + the dated brief and exit **without spending tokens or changing
-files**), or `plan` (proceed). `due` is the ordered member list to run; `skipped` explains each
-member left out (with its `next_due` date); `steps` is `due…` followed by `collect-brief`.
+This prints `{ status, due, skipped, steps, members, estimate, scope }` and performs **zero writes
+and spends zero model tokens** (FR41). `status` is `abort` (not a git checkout — emit the one-line
+stub brief and stop), `noop` (a completed run already exists tonight and `--force` was not passed —
+read `state.json` + the dated brief and exit **without spending tokens or changing files**), or
+`plan` (proceed). `due` is the ordered member list to run; `skipped` explains each member left out
+(with its `next_due` date); `steps` is `due…` followed by `collect-brief`.
+
+**Interactive runs: show the plan before launching anything (FR37/FR38).** When this run is
+interactive, render the enriched plan to the human *before* the first member subagent launches —
+everything below is already in the `--plan` JSON, so this is presentation only and changes no
+scheduling decision:
+
+- **Due members, in order** — from `members`: each `job` with its `budget_tokens`, `effort`, and
+  `timeout_minutes`.
+- **Skipped members** — from `skipped`: each `job` with its `next_due`.
+- **Estimate** — from `estimate`: the total `token_ceiling` (a hard budget ceiling, not a forecast)
+  and the bounded `duration_minutes`.
+- **Scope preview** — from `scope`: `analyzed` top-level directories with file counts and `excluded`
+  directories with counts, plus the `analyzed_files` / `excluded_files` totals. Computed by a
+  deterministic filesystem walk at zero model-token cost; a surprising split here means the scope is
+  wrong — fix `.nightwatch/config.yaml` before spending the budget.
+
+On **scheduled (non-interactive)** runs, print nothing: the same `scope` and `estimate` are written
+to `.nightwatch/out/run-status-<date>.json` by the non-`--plan` scheduler call, and the exclusions
+surface as the brief's one-line scope statement instead.
 
 1. **Preconditions & idempotency.** Handled by the `abort` / `noop` statuses above. `orchestrate.js
    --plan` performs **no writes** — it only reads `.nightwatch/state.json` and config.
