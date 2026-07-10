@@ -64,6 +64,71 @@ module.exports = {
     assert.ok(!above.includes('`RE-drift0`'), 'no human-visible id above the fold');
   },
 
+  // Story 8.2 / FR56 — the status line is derived from counts, tier by tier.
+  'brief: status line names blockers, else decisions, else quiet + waiting clause, else nothing (FR56)': () => {
+    const statusLine = (r, date, docs) => {
+      for (const [job, fs] of docs) writeFindings(r, job, date, [], fs);
+      collect(r, date);
+      return readFile(r, '.nightwatch/MORNING.md').split('\n')[2]; // header, blank, status line
+    };
+    // Blockers win.
+    assert.ok(/^\*\*2 release blockers\.\*\* Start below\.$/.test(statusLine(tmpRepo(), '2000-06-01',
+      [['repo-reconcile', mkFindings('repo-reconcile', 2, { kind: 'blocker', severity: 1 })]])), 'blocker count');
+    // No blockers, one decision.
+    assert.ok(/^\*\*1 decision needs you\.\*\* Nothing else is blocking\.$/.test(statusLine(tmpRepo(), '2000-06-02',
+      [['repo-reconcile', [{ id: 'RC-d', kind: 'decision', severity: 2, title: 'name it', evidence: [], action: 'human-decision', verified: true }]]])), 'decision count');
+    // Quiet with a ready-made fix waiting.
+    assert.ok(/^\*\*Quiet night\.\*\* Nothing is blocking, no decisions needed\. One ready-made fix is waiting for you\.$/.test(statusLine(tmpRepo(), '2000-06-03',
+      [['repo-reconcile', [{ id: 'RC-p', kind: 'drift', severity: 3, title: 'fix', evidence: [], action: 'patch-available', verified: true }]]])), 'quiet + fix clause');
+    // Nothing at all.
+    assert.ok(/^\*\*Quiet night\.\*\* Nothing needs you today\.$/.test(statusLine(tmpRepo(), '2000-06-04', [])), 'nothing needs you');
+  },
+
+  // Story 8.2 / FR56 — a crashed/timed-out member is named in the status line, above the fold.
+  'brief: a crashed member is named in the status line, not only in Machine notes (FR56)': () => {
+    const r = tmpRepo();
+    const date = '2000-06-05';
+    writeFindings(r, 'arch-review', date, [], mkFindings('arch-review', 1, { kind: 'arch', severity: 3 }));
+    writeJSON(path.join(outDir(r), `run-status-${date}.json`), { jobs: [
+      { job: 'repo-reconcile', status: 'crashed', note: 'subagent exited non-zero' },
+      { job: 'arch-review', status: 'ok' },
+    ] });
+    collect(r, date);
+    const status = readFile(r, '.nightwatch/MORNING.md').split('\n')[2];
+    assert.ok(/repo-reconcile crashed, see Machine notes\./.test(status), `failure named in status line, got: ${status}`);
+  },
+
+  // Story 8.2 / FR57 — first-action selection: same class + severity, the lower effort wins; an
+  // absent effort sorts last; the chosen finding is the single First action.
+  'brief: first action picks lowest effort_min at equal rank/severity, absent last (FR57)': () => {
+    const r = tmpRepo();
+    const date = '2000-06-06';
+    writeFindings(r, 'repo-reconcile', date, [], [
+      { id: 'RC-slow', kind: 'drift', severity: 2, title: 'slow', evidence: [], action: 'none', verified: true, next_step: { summary: 'Slow fix', effort_min: 30 } },
+      { id: 'RC-fast', kind: 'drift', severity: 2, title: 'fast', evidence: [], action: 'none', verified: true, next_step: { summary: 'Fast fix', effort_min: 2 } },
+      { id: 'RC-none', kind: 'drift', severity: 2, title: 'noest', evidence: [], action: 'none', verified: true, next_step: { summary: 'No estimate' } },
+    ]);
+    collect(r, date);
+    const brief = readFile(r, '.nightwatch/MORNING.md');
+    const firstBlock = brief.split('## ▶ First action')[1].split('## If you have energy')[0];
+    assert.ok(/Fast fix/.test(firstBlock) && !/Slow fix/.test(firstBlock), 'lowest effort is the first action');
+    // Absent-effort finding sorts after both estimated ones in the remainder list.
+    const rest = brief.split('## If you have energy after that')[1].split('## Where you stand')[0];
+    assert.ok(rest.indexOf('Slow fix') < rest.indexOf('No estimate'), 'absent effort sorts last');
+  },
+
+  // Story 8.2 / FR57 — a human-decision that becomes the First action renders as a decide-action.
+  'brief: a human-decision first action renders as "Decide: …" (FR57)': () => {
+    const r = tmpRepo();
+    const date = '2000-06-07';
+    writeFindings(r, 'repo-reconcile', date, [], [
+      { id: 'RC-dec', kind: 'decision', severity: 2, title: 'pick a package name', evidence: [], action: 'human-decision', verified: true },
+    ]);
+    collect(r, date);
+    const firstBlock = readFile(r, '.nightwatch/MORNING.md').split('## ▶ First action')[1].split('## If you have energy')[0];
+    assert.ok(/- \[ \] \*\*Decide: pick a package name\*\*/.test(firstBlock), 'decide-action rendering');
+  },
+
   // Regression (finding 0010): the release-progress line rendered a 0–1 fraction verbatim, so
   // 0.38 printed as "0.38%". The render boundary must convert the fraction to a percent → "38%".
   'brief: progress fraction 0.38 renders as 38%, never 0.38% (finding 0010)': () => {

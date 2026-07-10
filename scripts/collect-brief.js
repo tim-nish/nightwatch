@@ -39,10 +39,19 @@ function evStr(ev) {
 // and the brief stays byte-deterministic (NFR8).
 function detailsAnchor(f) { return `d-${f.id}`; }
 
-// The imperative summary a reader acts on: the judgment-authored `next_step.summary` when present,
-// otherwise the finding's own title (FR54 fallback — the composition degrades, it never breaks).
+// The imperative summary a reader acts on: the judgment-authored `next_step.summary` when present;
+// otherwise the finding's own title (FR54 fallback). A human-decision finding with no authored
+// summary renders as a decide-action so "the first action" reads as a decision to make (FR57).
 function actionSummary(f) {
-  return (f.next_step && f.next_step.summary) ? f.next_step.summary : f.title;
+  if (f.next_step && f.next_step.summary) return f.next_step.summary;
+  if (f._cls && f._cls.label === 'decision') return `Decide: ${f.title}`;
+  return f.title;
+}
+
+// Sort key for the effort tiebreak (FR57): fewer minutes first, an absent estimate sorts last.
+function effortKey(f) {
+  const e = f.next_step && f.next_step.effort_min;
+  return typeof e === 'number' ? e : Infinity;
 }
 
 // One action line, rendered mechanically from `next_step` (spec §6). Checkbox first (the feedback
@@ -86,15 +95,26 @@ function readReleaseHeader(root, config) {
 }
 
 // The brief's status line: one bold sentence answering "is anything on fire?" before anything else
-// (spec §6). Derived from counts of what's shown. (Story 8.1 lays down the tiers; Story 8.2 refines
-// the exact wording and names crashed/timed-out members.)
-function deriveStatusLine(shown) {
+// (spec §6, FR56). Derived purely from counts, so it is byte-deterministic. Tier order: blockers →
+// decisions → quiet-with-a-waiting-clause → nothing. A crashed or timed-out member is named in the
+// status line itself (not only in Machine notes) so a failed night can't hide below the fold.
+function deriveStatusLine(shown, runStatus) {
+  const failed = (runStatus.jobs || []).filter((j) => j.status === 'crashed' || j.status === 'timeout');
+  const failSuffix = failed.length
+    ? ` — ${failed.length === 1 ? `${failed[0].job} ${failed[0].status}` : `${failed.length} jobs failed`}, see Machine notes.`
+    : '';
   const blockers = shown.filter((f) => f._cls.label === 'blocker').length;
   const decisions = shown.filter((f) => f._cls.label === 'decision').length;
-  if (blockers) return `**${blockers} release blocker${blockers > 1 ? 's' : ''}.** Start below.`;
-  if (decisions) return `**${decisions} decision${decisions > 1 ? 's' : ''} ${decisions > 1 ? 'need' : 'needs'} you.** Nothing else is blocking.`;
-  if (shown.length) return '**Quiet night.** Nothing is blocking, no decisions needed — a few things are waiting below.';
-  return '**Quiet night.** Nothing needs you today.';
+  if (blockers) return `**${blockers} release blocker${blockers > 1 ? 's' : ''}.** Start below.${failSuffix}`;
+  if (decisions) return `**${decisions} decision${decisions > 1 ? 's' : ''} ${decisions > 1 ? 'need' : 'needs'} you.** Nothing else is blocking.${failSuffix}`;
+  if (shown.length) {
+    const fixes = shown.filter((f) => f.action === 'patch-available').length;
+    const clause = fixes
+      ? `${fixes === 1 ? 'One ready-made fix is' : `${fixes} ready-made fixes are`} waiting for you.`
+      : `${shown.length} thing${shown.length > 1 ? 's' : ''} waiting below.`;
+    return `**Quiet night.** Nothing is blocking, no decisions needed. ${clause}${failSuffix}`;
+  }
+  return `**Quiet night.** Nothing needs you today.${failSuffix}`;
 }
 
 // The "Where you stand" release-position block (spec §6): the progress toward the target and a
@@ -152,8 +172,9 @@ function collect(root, date, { force = false } = {}) {
     for (const n of doc.degraded || []) degradedNotices.push({ job: doc.job, note: n });
     for (const f of doc.findings || []) if (briefEligible(f)) all.push({ ...f, job: doc.job, _cls: classify(f) });
   }
-  // Global ranking for the cap: rank class, then severity, then id (deterministic — NFR8).
-  all.sort((a, b) => a._cls.rank - b._cls.rank || a.severity - b.severity || a.id.localeCompare(b.id));
+  // Global ranking for the cap and first-action selection (FR57): priority class → severity →
+  // lowest effort (absent last) → id. Fully deterministic (NFR8).
+  all.sort((a, b) => a._cls.rank - b._cls.rank || a.severity - b.severity || effortKey(a) - effortKey(b) || a.id.localeCompare(b.id));
   const shown = all.slice(0, cap);
   const overflow = all.slice(cap);
 
@@ -163,7 +184,7 @@ function collect(root, date, { force = false } = {}) {
   L.push(`# Nightwatch — ${date}`, '');
 
   // Status line — one bold sentence answering "is anything on fire?" before anything else.
-  L.push(deriveStatusLine(shown), '');
+  L.push(deriveStatusLine(shown, runStatus), '');
 
   // ▶ First action — exactly one (the top-ranked shown finding), fully renderable without reading on.
   const first = shown[0] || null;
