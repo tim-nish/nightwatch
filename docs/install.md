@@ -98,20 +98,32 @@ Commands provided (plugin-install name — Option B symlink installs get the un-
 
 ## What lands in your repo
 
+Everything lives under `.nightwatch/` (the single home — zero Nightwatch files in the repo root
+by default). Each file names its own moment, in three tiers: **read** in the morning, **edit** in
+the daytime, or **machine memory** you never open. `init` writes a `.nightwatch/README.md` carrying
+this same map.
+
 ```
-STATE.md              # human declarations (drafted by /nightwatch init)
-RELEASE.md            # maintained by /release-progress
 .nightwatch/
-  config.yaml         # optional operational config
-  MORNING.md          # latest brief — open this
-  briefs/<date>.md    # dated briefs (committed — they're memory)
-  ledger.jsonl        # every finding ever, with acted-on/dismissed marks
-  state.json          # cadence cursors, last-run dates
-  out/                # transient per-run JSON + patch files (gitignore this)
+  README.md           # ~15-line orientation: the tier map below (written by init)
+  # ── read (morning) ──
+  MORNING.md          # THE file: a byte-identical copy of the newest dated brief — open this
+  out/*.patch         # proposed fixes; only when the brief links one, followed by its full path
+  # ── edit (daytime — overnight runs never rewrite your content) ──
+  STATE.md            # your declarations (drafted by /nightwatch init)
+  config.yaml         # operational knobs; nothing here changes overnight
+  RELEASE.md          # release tracker; machine-maintained around your human-owned Notes tail
+  # ── machine memory (never open) ──
+  briefs/<date>.md    # dated copies of each brief (committed — they're memory); never open
+  ledger.jsonl        # every finding + your checkbox verdicts, backfilled — never open or edit
+  state.json          # the machine's scheduling cursor — never open
+  out/                # internal per-run JSON, gitignored — never browse (except *.patch, above)
 ```
 
-Add `.nightwatch/out/` to your `.gitignore`. Commit the briefs and the ledger — they are the
-system's memory.
+`STATE.md` is yours; `state.json` is the machine's scheduling cursor — unrelated despite the name.
+`out/` is internal per-run JSON (never browsed) except `*.patch` files, which the brief links by
+full repo-relative path. Add `.nightwatch/out/` to your `.gitignore` (`init` adds the nested entry
+for you). Commit the briefs and the ledger — they are the system's memory, never opened by hand.
 
 ## Safety model
 
