@@ -12,6 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const { parseArgs, repoRoot, todayISO, nwDir, ensureDir, readJSONSafe, writeJSON } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
+const { analysisExcludeGlobs } = require('./lib/scope');
 const { makeSignal, writeSignals } = require('./lib/signals');
 const { makeFinding } = require('./lib/findings');
 const { universalGitSignals } = require('./git-signals');
@@ -81,7 +82,7 @@ function extractSignals(root, opts = {}) {
   const findings = [];
 
   // 1) Universal built-in — always runs, always the floor (§2.6, story 5.1).
-  const ug = universalGitSignals(root, { window: opts.window, ignoreGlobs: config.ignore });
+  const ug = universalGitSignals(root, { window: opts.window, ignoreGlobs: analysisExcludeGlobs(config) });
   signals.push(...ug.signals);
   for (const d of ug.degraded) degraded.push(d);
   sources.push(...ug.sources);

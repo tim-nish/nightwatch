@@ -6,6 +6,7 @@
 // git repo. Usable as a CLI (--repo . writes out/git-signals-<date>.json) or as a module.
 const { parseArgs, repoRoot, todayISO, git, isGitRepo, commitCount, topSegment, makeIgnore, walkFiles, readFileSafe, writeJSON, outDir } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
+const { analysisExcludeGlobs } = require('./lib/scope');
 const { makeSignal, writeSignals } = require('./lib/signals');
 const path = require('path');
 
@@ -170,7 +171,7 @@ function main() {
   const date = todayISO(args);
   const window = args.window ? parseInt(args.window, 10) : 400;
   const { config } = loadConfig(root);
-  const norm = universalGitSignals(root, { window, ignoreGlobs: config.ignore });
+  const norm = universalGitSignals(root, { window, ignoreGlobs: analysisExcludeGlobs(config) });
   // Primary output: the normalized signals document the judgment layer consumes (FR8).
   writeSignals(root, date, norm);
   // Back-compat: the raw git-signals metrics doc (unchanged shape for pre-schema consumers).

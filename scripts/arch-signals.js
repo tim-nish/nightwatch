@@ -8,6 +8,7 @@
 const path = require('path');
 const { parseArgs, repoRoot, todayISO, walkFiles, readFileSafe, topSegment, globToRegExp, writeJSON, outDir } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
+const { analysisExcludeGlobs } = require('./lib/scope');
 const { gitSignals } = require('./git-signals');
 
 const CODE_EXT = /\.(js|mjs|cjs|ts|tsx|jsx|py)$/;
@@ -34,7 +35,7 @@ function resolveRel(fromRel, spec) {
 function archSignals(root) {
   const { config, layers, authority } = loadConfig(root);
   const degraded = [];
-  const files = walkFiles(root, config.ignore);
+  const files = walkFiles(root, analysisExcludeGlobs(config));
   const codeFiles = files.filter(isCode);
 
   // ---- Speculation: TS/JS interfaces with exactly one implementer ----
@@ -129,7 +130,7 @@ function archSignals(root) {
   }
 
   // ---- Hidden coupling + growth (git) ----
-  const gs = gitSignals(root, { ignoreGlobs: config.ignore });
+  const gs = gitSignals(root, { ignoreGlobs: analysisExcludeGlobs(config) });
   for (const d of gs.degraded) degraded.push('coupling: ' + d);
   const hidden_coupling = gs.coupling;
 

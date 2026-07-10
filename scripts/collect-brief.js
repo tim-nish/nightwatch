@@ -12,6 +12,7 @@ const { parseArgs, repoRoot, todayISO, nwDir, outDir, ensureDir, readFileSafe, r
 const { readAllFindings } = require('./lib/findings');
 const { openTracker } = require('./lib/tracker');
 const { loadConfig } = require('./lib/config');
+const { excludedTopDirs } = require('./lib/scope');
 
 const MEMBER_JOBS = ['repo-reconcile', 'arch-review', 'release-progress'];
 
@@ -147,6 +148,15 @@ function collect(root, date, { force = false } = {}) {
   L.push('## Appendix (overflow — ids only)');
   if (overflow.length) L.push('- ' + overflow.map((f) => `\`${f.id}\``).join(', ')); else L.push('- none');
   L.push('');
+
+  // Scope statement (FR42): name the excluded top-level trees so a wrong scope is visible on the
+  // brief, never silent. `ignore` (never look) and `dev_tooling` (not the product) are unioned.
+  const excluded = excludedTopDirs(root, config);
+  L.push(excluded.length
+    ? `Scope: excluded ${excluded.join(', ')} (ignore + dev_tooling) — edit \`.nightwatch/config.yaml\` to change.`
+    : 'Scope: no top-level directories excluded — edit `.nightwatch/config.yaml` to change.');
+  L.push('');
+
   L.push('---', `_Check a box (\`[x]\`) to mark acted-on, or \`[-]\` to dismiss; the next run backfills the ledger. Total findings: ${all.length}, shown: ${included.size}, cap: ${cap}._`);
 
   const briefText = L.join('\n') + '\n';

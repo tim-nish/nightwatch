@@ -7,6 +7,7 @@
 const path = require('path');
 const { parseArgs, repoRoot, todayISO, walkFiles, readFileSafe, exists, git, writeJSON, outDir } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
+const { analysisExcludeGlobs } = require('./lib/scope');
 
 function findFile(root, files, re) { return files.find((f) => re.test(f)) || null; }
 
@@ -121,7 +122,7 @@ const CHECKS = {
 function releaseChecks(root) {
   const { config } = loadConfig(root);
   const disabled = new Set((config.release_checks && config.release_checks.disable) || []);
-  const files = walkFiles(root, config.ignore);
+  const files = walkFiles(root, analysisExcludeGlobs(config));
   const results = [];
   for (const id of Object.keys(CHECKS)) {
     if (disabled.has(id)) { results.push({ id, status: 'skip', detail: 'disabled in config' }); continue; }

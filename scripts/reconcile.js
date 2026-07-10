@@ -13,6 +13,7 @@ const fs = require('fs');
 const os = require('os');
 const { parseArgs, repoRoot, todayISO, exists, readFileSafe, walkFiles, writeJSON, outDir, globToRegExp, ensureDir, git, isGitRepo } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
+const { analysisExcludeGlobs } = require('./lib/scope');
 const { inventory } = require('./surface-inventory');
 const { makeFinding, recurrenceCounts, readLedger, appendLedger, SCHEMA_VERSION } = require('./lib/findings');
 
@@ -356,7 +357,7 @@ function reconcile(root, opts = {}) {
       title: 'declare authority in STATE.md; run `/nightwatch init`', locus: 'authority:undeclared', evidence: [], extra: undefined }));
     degraded.push('authority undeclared — detection-only mode; findings omit direction-of-fix');
   } else {
-    const allFiles = walkFiles(root, config.ignore || []);
+    const allFiles = walkFiles(root, analysisExcludeGlobs(config));
     for (const key of Object.keys(authority).sort()) {
       const e = authority[key];
       const glob = e && e.artifact;
