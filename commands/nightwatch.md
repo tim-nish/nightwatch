@@ -135,8 +135,17 @@ member left out (with its `next_due` date); `steps` is `due…` followed by `col
 
 ## Failure handling
 
-- Not a git checkout → one-line stub brief, exit.
-- A member exceeds `timeout_minutes` → kill it, note it, proceed to the next job.
-- `collect-brief.js` itself fails → the raw findings JSON remains in `.nightwatch/out/`; write a
-  stub `MORNING.md` naming the failure. **No brief at all is itself a signal — always attempt a
-  stub.**
+Partial nights degrade cleanly — one member failing never blocks the others, and the human always
+wakes to a brief (FR32):
+
+- **Not a git checkout** → `orchestrate.js --plan` returns `status:"abort"` and writes a one-line
+  stub `MORNING.md` (and dated brief) naming the failure. Stop; run no members.
+- **A member crashes or exceeds `timeout_minutes`** → kill that subagent, then record its outcome
+  in `.nightwatch/out/run-status-<date>.json` — `{"job", "status":"timeout"|"crashed", "note",
+  "tokens"}` — and proceed to the next job. A member cadence left out records `"status":"skipped"`.
+  `collect-brief.js` renders every non-`ok` status as exactly **one line** in the "Failures &
+  degraded notices" section, so the surviving jobs' sections are untouched and the run still exits
+  success.
+- **`collect-brief.js` itself fails** → the raw findings JSON is left untouched in
+  `.nightwatch/out/`, and the collector still writes a stub `MORNING.md` (and dated brief) naming
+  the failure. **No brief at all is itself a signal — the collector always attempts a stub.**

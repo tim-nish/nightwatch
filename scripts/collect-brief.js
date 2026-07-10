@@ -168,13 +168,52 @@ function collect(root, date, { force = false } = {}) {
   return { total: all.length, shown: included.size, overflow: overflow.length, demotions };
 }
 
+// Write a one-line stub brief that names a failure, WITHOUT touching any out/*.json. "No brief at
+// all is itself a signal; the collector always attempts a stub" (§6 failure handling, FR32 AC3/AC4)
+// — so whenever full assembly can't run (a non-git abort upstream, or assembly throwing here) the
+// human still finds a MORNING.md (and dated brief) that says what went wrong and where the raw
+// findings are. Writes land only inside `.nightwatch/**`, the declared write surface.
+function writeStubBrief(root, date, reason) {
+  const text = [
+    `# Nightwatch — morning brief (${date})`,
+    '',
+    '## Failures & degraded notices',
+    `- **brief incomplete** — ${reason}`,
+    '',
+    '---',
+    '_Stub brief: no full brief could be assembled. Any raw findings remain under `.nightwatch/out/`'
+      + ' for triage — no brief at all is itself a signal._',
+    '',
+  ].join('\n');
+  const briefsDir = path.join(nwDir(root), 'briefs');
+  ensureDir(briefsDir);
+  fs.writeFileSync(path.join(briefsDir, `${date}.md`), text);
+  fs.writeFileSync(path.join(nwDir(root), 'MORNING.md'), text);
+  return text;
+}
+
+// Top-level guard (§6 AC3): assemble the brief, but never leave the human with nothing. If assembly
+// throws (a corrupt/too-new findings doc, a store error, …) fall back to a stub that names the
+// failure while leaving the raw out/*.json untouched for triage. Returns collect()'s result on
+// success, or `{ status: 'stub', reason }` on fallback. The collector never deletes out/*.json.
+function collectOrStub(root, date, opts = {}) {
+  try {
+    return collect(root, date, opts);
+  } catch (err) {
+    const reason = `collect-brief could not assemble: ${(err && err.message) || String(err)}`;
+    writeStubBrief(root, date, reason);
+    return { status: 'stub', reason };
+  }
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const root = repoRoot(args);
   const date = todayISO(args);
-  const res = collect(root, date, { force: !!args.force });
+  // Always emit at least a stub — a failed assembly must not exit with no brief written.
+  const res = collectOrStub(root, date, { force: !!args.force });
   process.stdout.write(JSON.stringify(res, null, 2) + '\n');
 }
 
 if (require.main === module) main();
-module.exports = { collect, computeDemotions };
+module.exports = { collect, collectOrStub, writeStubBrief, computeDemotions };
