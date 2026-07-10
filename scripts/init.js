@@ -22,8 +22,12 @@
 //                      nothing (FR50 detection half; the interview confirms before --migrate).
 //   --migrate          relocate the confirmed legacy root artifacts into .nightwatch/ (byte-for-
 //                      byte, `git mv` when tracked) before instantiating declarations (FR50).
+//   --update           daytime, interactive non-destructive reconfigure (FR52): with no other
+//                      write flag, PRINT the proposed diffs (read-only); with `--dev-tooling a,b`,
+//                      APPLY the confirmed dev-tooling additions (unioned with the current set,
+//                      config.yaml otherwise byte-preserved). Never invoked on a scheduled run.
 const { parseArgs, repoRoot, isGitRepo } = require('./lib/util');
-const { runInit, detectDevToolingCandidates, planMigration } = require('./lib/init');
+const { runInit, detectDevToolingCandidates, planMigration, planUpdate, applyUpdate } = require('./lib/init');
 
 /** Split a comma-separated `--dev-tooling` value into trimmed entries; a bare `--dev-tooling` = []. */
 function parseDevTooling(val) {
@@ -51,6 +55,18 @@ function main() {
   if (args['detect-migration']) {
     const plan = planMigration(root);
     process.stdout.write(JSON.stringify({ status: 'ok', ...plan }, null, 2) + '\n');
+    return;
+  }
+  // Non-destructive reconfigure. Without a write flag it is read-only (print proposed diffs);
+  // with a confirmed --dev-tooling set it applies only those, byte-preserving the rest (FR52).
+  if (args.update) {
+    const devTooling = parseDevTooling(args['dev-tooling']);
+    if (devTooling === undefined) {
+      process.stdout.write(JSON.stringify({ status: 'ok', mode: 'update-plan', ...planUpdate(root) }, null, 2) + '\n');
+    } else {
+      const applied = applyUpdate(root, { devTooling });
+      process.stdout.write(JSON.stringify({ status: 'ok', mode: 'update-apply', ...applied }, null, 2) + '\n');
+    }
     return;
   }
   const res = runInit(root, {

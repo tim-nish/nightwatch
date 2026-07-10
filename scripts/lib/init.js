@@ -16,6 +16,7 @@
 // plain inputs, so the whole module is unit-testable without any interactive input.
 const fs = require('fs');
 const path = require('path');
+const yaml = require('js-yaml');
 const { exists, readFileSafe, ensureDir, git, makeIgnore, walkFiles } = require('./util');
 const { DEFAULT_DEV_TOOLING, analysisExcludeGlobs } = require('./scope');
 const { loadConfig } = require('./config');
@@ -343,6 +344,136 @@ function writeDevTooling(root, confirmed) {
   return { written: true, created: false, dev_tooling: list };
 }
 
+// ---- `/nightwatch init --update`: non-destructive reconfigure (FR52) ---------------------------
+
+/** The user's OWN `dev_tooling:` entries from config.yaml (raw list that EXTENDS the defaults —
+ * not the resolved set). Absent/unparseable → []. Used to union confirmed additions without ever
+ * baking the shipped defaults into the file. */
+function currentUserDevTooling(root) {
+  const text = readFileSafe(path.join(root, '.nightwatch', 'config.yaml'));
+  if (text == null) return [];
+  try {
+    const y = yaml.load(text);
+    const dt = y && y.dev_tooling;
+    return Array.isArray(dt) ? dt.filter((x) => typeof x === 'string') : [];
+  } catch { return []; }
+}
+
+/** Top-level path segments named by declared authority artifacts — so a dir a declaration already
+ * covers is not re-proposed as "unclassified". */
+function authorityTopSegments(authority) {
+  const set = new Set();
+  if (authority && typeof authority === 'object') {
+    for (const k of Object.keys(authority)) {
+      const art = authority[k] && authority[k].artifact;
+      if (typeof art === 'string' && art.includes('/')) set.add(art.split('/')[0]);
+    }
+  }
+  return set;
+}
+
+/**
+ * Plan a non-destructive `init --update` (FR52): re-run detection against the CURRENT repo and
+ * propose only what CHANGED — additions, never rewrites. Read-only; the interview confirms each
+ * proposal before {@link applyUpdate} writes anything. Two proposal kinds, both deterministic:
+ *   - `dev_tooling`: a detected dev-tooling candidate (Story 6.5) not already covered by the
+ *     resolved `ignore`/`dev_tooling` — proposes adding its glob.
+ *   - `module`: a git-tracked top-level dir that is analyzed (not excluded), not on the product
+ *     allowlist, and not named by any authority declaration — a new module to classify (declare
+ *     as product, or add to dev_tooling/ignore).
+ * Idempotent: a repo unchanged since the last init/update proposes nothing.
+ * @param {string} root @param {{ config?: any, gitFn?: any }} [opts]
+ * @returns {{ proposals: { id:string, kind:string, dir:string, glob?:string, summary:string }[] }}
+ */
+function planUpdate(root, opts = {}) {
+  const lc = loadConfig(root);
+  const config = opts.config || lc.config;
+  const gitFn = opts.gitFn || git;
+  const excluded = makeIgnore(analysisExcludeGlobs(config));
+  const authTops = authorityTopSegments(lc.authority);
+  const proposals = [];
+  const seen = new Set();
+  // dev-tooling candidates not yet covered by the resolved exclude set.
+  for (const c of detectDevToolingCandidates(root, { config, gitFn })) {
+    if (excluded(`${c.dir}/__scope_probe__`)) continue; // already classified as dev_tooling/ignore
+    proposals.push({ id: `dev_tooling:${c.dir}`, kind: 'dev_tooling', dir: c.dir, glob: c.glob, summary: `add \`${c.glob}\` to dev_tooling — ${c.reason}` });
+    seen.add(c.dir);
+  }
+  // Unclassified modules: tracked, analyzed, not allowlisted, not authority-declared, not already
+  // surfaced as a dev-tooling candidate above.
+  for (const dir of trackedTopDirs(root, gitFn)) {
+    if (seen.has(dir)) continue;
+    if (excluded(`${dir}/__scope_probe__`)) continue;
+    if (PRODUCT_DIR_ALLOWLIST.has(dir)) continue;
+    if (authTops.has(dir)) continue;
+    proposals.push({ id: `module:${dir}`, kind: 'module', dir, summary: `new top-level \`${dir}/\` is unclassified — declare it as product (authority) or add it to dev_tooling/ignore` });
+  }
+  return { proposals: proposals.sort((a, b) => a.id.localeCompare(b.id)) };
+}
+
+/**
+ * Byte-preserving single-key rewrite of a declaration field (FR52) — the confirmed-declaration-edit
+ * half of the unified update gate. Rewrites `key: <value>` in place: for `.nightwatch/STATE.md` the
+ * line inside its fenced yaml block, for `.nightwatch/config.yaml` a top-level key. Every other line
+ * of the file is preserved verbatim. Returns `{ changed }` — false when the key is absent (update
+ * proposes only changes to fields that exist) or already equal.
+ * @param {string} root @param {string} fileRel  repo-relative declaration path @param {string} key @param {string} value
+ */
+function setDeclarationField(root, fileRel, key, value) {
+  const abs = path.join(root, ...fileRel.split('/'));
+  const text = readFileSafe(abs);
+  if (text == null) return { changed: false, reason: 'file-absent' };
+  const lines = text.split('\n');
+  // For STATE.md, confine the rewrite to inside the ```yaml fenced block.
+  let lo = 0, hi = lines.length;
+  if (/STATE\.md$/.test(fileRel)) {
+    const open = lines.findIndex((l) => /^```ya?ml\s*$/i.test(l));
+    if (open === -1) return { changed: false, reason: 'no-yaml-block' };
+    const close = lines.findIndex((l, i) => i > open && /^```\s*$/.test(l));
+    lo = open + 1; hi = close === -1 ? lines.length : close;
+  }
+  const re = new RegExp(`^(\\s*)${key}\\s*:`);
+  for (let i = lo; i < hi; i++) {
+    const m = lines[i].match(re);
+    if (m) {
+      const next = `${m[1]}${key}: ${value}`;
+      if (lines[i] === next) return { changed: false, reason: 'already-equal' };
+      lines[i] = next;
+      fs.writeFileSync(abs, lines.join('\n'));
+      return { changed: true };
+    }
+  }
+  return { changed: false, reason: 'key-absent' };
+}
+
+/**
+ * Apply ONLY the human-confirmed proposals of an `init --update` (FR52), byte-preserving every
+ * unconfirmed part of each declaration. Both write kinds flow through this one gate so nothing is
+ * create-only in one place and silent-overwrite in another:
+ *   - `dev_tooling` proposals (and confirmed `module`s the human classified as tooling): their
+ *     globs are UNIONED with the user's current `dev_tooling` and rewritten via {@link writeDevTooling}
+ *     (single-line replace; rest of config.yaml preserved).
+ *   - `field` edits (a confirmed declaration-field change proposed in the interview): applied via
+ *     {@link setDeclarationField}.
+ * Only confirmed items are written; skipped ones leave the file untouched. Idempotent.
+ * @param {string} root
+ * @param {{ devTooling?: string[], fields?: { file:string, key:string, value:string }[] }} confirmed
+ * @returns {{ dev_tooling: any, fields: any[] }}
+ */
+function applyUpdate(root, confirmed = {}) {
+  let devToolingResult = null;
+  const adds = (confirmed.devTooling || []).map(toGlob).filter(Boolean);
+  if (adds.length) {
+    const union = [...new Set([...currentUserDevTooling(root), ...adds])];
+    devToolingResult = writeDevTooling(root, union);
+  }
+  const fields = [];
+  for (const f of (confirmed.fields || [])) {
+    fields.push({ ...f, result: setDeclarationField(root, f.file, f.key, f.value) });
+  }
+  return { dev_tooling: devToolingResult, fields };
+}
+
 /**
  * One deterministic init pass: probe the adapters, then (unless `probeOnly`) instantiate the
  * missing declaration files and register the out/ ignore. When `devTooling` is provided (the
@@ -368,4 +499,5 @@ function runInit(root, opts = {}) {
 module.exports = {
   runInit, writeDeclarations, ensureGitignore, probeAdapters, readTemplate, TEMPLATES_DIR,
   detectDevToolingCandidates, writeDevTooling, trackedTopDirs, planMigration, applyMigration,
+  planUpdate, applyUpdate, setDeclarationField, currentUserDevTooling,
 };
