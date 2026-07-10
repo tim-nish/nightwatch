@@ -65,9 +65,9 @@ function buildPlan(root, config, plan) {
  * records what a run consists of. Returns a status object; only mutates `.nightwatch/state.json`,
  * and only when a run is actually recorded (not on a no-op or a plan-only call).
  * @param {string} root @param {string} date
- * @param {{ force?: boolean, planOnly?: boolean }} [opts]
+ * @param {{ force?: boolean, planOnly?: boolean, yes?: boolean }} [opts]
  */
-function orchestrate(root, date, { force = false, planOnly = false } = {}) {
+function orchestrate(root, date, { force = false, planOnly = false, yes = false } = {}) {
   // 1. Precondition: unattended review only makes sense inside a git checkout (§6 failure handling,
   //    FR32 AC4). Abort, but still emit a one-line stub brief so the human wakes to an explanation
   //    rather than silence — the write lands inside `.nightwatch/**` and never spends tokens.
@@ -78,6 +78,9 @@ function orchestrate(root, date, { force = false, planOnly = false } = {}) {
 
   const { config } = loadConfig(root);
   const onDisk = readState(root);
+  // First run ⟺ no scheduler state exists yet. This is the sole trigger for the interactive
+  // confirmation gate (FR40): from the second run onward `state.json` exists and no gate fires.
+  const firstRun = onDisk == null;
 
   // 2. Idempotency gate. A completed run tonight (state.last_brief_date or the dated brief) means a
   //    re-invocation must exit WITHOUT spending tokens or changing files — unless --force overrides.
@@ -91,7 +94,12 @@ function orchestrate(root, date, { force = false, planOnly = false } = {}) {
   // Presentation enrichment (FR37/FR38/FR41): member budgets, estimate, and scope preview. Never
   // influences the scheduling decision above — it is derived from it.
   const { members, estimate, scope } = buildPlan(root, config, plan);
-  const base = { due: plan.due, skipped: plan.skipped, steps: plan.steps, members, estimate, scope };
+  // First-run confirmation gate (FR40). The prompt itself is the command's job — orchestrate runs
+  // under a no-prompt permission profile — so this only DECLARES whether an interactive run should
+  // confirm before launching members. `--force`/`--yes` clear it; scheduled runs ignore it (they
+  // never prompt), so behavior stays byte-identical to the ungated orchestrator.
+  const gate = { required: firstRun && !force && !yes, reason: firstRun ? 'first-run' : null };
+  const base = { due: plan.due, skipped: plan.skipped, steps: plan.steps, members, estimate, scope, first_run: firstRun, gate };
 
   // --plan is a hard dry path (FR41): return the full plan, print nothing to disk. Zero writes.
   if (planOnly) return { status: 'plan', ...base };
@@ -126,7 +134,7 @@ function main() {
   const args = parseArgs(process.argv.slice(2));
   const root = repoRoot(args);
   const date = todayISO(args);
-  const res = orchestrate(root, date, { force: !!args.force, planOnly: !!args.plan });
+  const res = orchestrate(root, date, { force: !!args.force, planOnly: !!args.plan, yes: !!args.yes });
   process.stdout.write(JSON.stringify(res, null, 2) + '\n');
 }
 

@@ -1,6 +1,6 @@
 ---
 description: Orchestrator — run what's due (reconcile → arch-review → release-progress) and emit one capped, ranked morning brief. `init` runs interactive daytime setup. The scheduled entrypoint.
-argument-hint: "[init] [--repo .] [--force]"
+argument-hint: "[init] [--repo .] [--force] [--yes]"
 ---
 
 # /nightwatch
@@ -107,6 +107,21 @@ scheduling decision:
 On **scheduled (non-interactive)** runs, print nothing: the same `scope` and `estimate` are written
 to `.nightwatch/out/run-status-<date>.json` by the non-`--plan` scheduler call, and the exclusions
 surface as the brief's one-line scope statement instead.
+
+**First-run confirmation gate (FR40).** When `--plan` reports `gate.required: true` **and** this
+session is interactive, ask the human exactly one yes/no *after* showing the plan above and *before*
+launching any member subagent — this is the first time this repo pays a full budget, so confirm it
+deliberately. `gate.required` is true only on the very first run (`first_run: true`, i.e. no
+`.nightwatch/state.json` yet) and only when neither `--force` nor `--yes` was passed:
+
+- **Declined** → stop now. Launch no members, run no `collect-brief`, and do **not** make the
+  state-advancing scheduler call below. Nothing has been written and no tokens were spent (the only
+  step so far was `--plan`, which writes nothing).
+- **Confirmed** (or `--force`/`--yes`, or `gate.required: false`) → proceed to run members.
+- **Non-interactive / scheduled runs never prompt** — the permission profile forbids it (safety
+  rules above); if the environment cannot prompt, proceed. Behavior is byte-identical to the
+  ungated orchestrator. From the second run onward `state.json` exists, so `gate.required` is false
+  and there is no gate.
 
 1. **Preconditions & idempotency.** Handled by the `abort` / `noop` statuses above. `orchestrate.js
    --plan` performs **no writes** — it only reads `.nightwatch/state.json` and config.
