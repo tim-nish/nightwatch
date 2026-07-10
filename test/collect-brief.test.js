@@ -16,6 +16,18 @@ function mkFindings(job, n, { kind, severity, verified = true, action = 'none' }
 }
 
 module.exports = {
+  // Regression (finding 0010): the release-progress line rendered a 0–1 fraction verbatim, so
+  // 0.38 printed as "0.38%". The render boundary must convert the fraction to a percent → "38%".
+  'brief: progress fraction 0.38 renders as 38%, never 0.38% (finding 0010)': () => {
+    const r = tmpRepo();
+    const date = '2000-03-01';
+    write(r, 'RELEASE.md', '---\nphase: hardening\ntarget: "v0.1 public release"\nprogress: 0.38\nupdated: 2000-03-01\n---\n# Release progress\n');
+    collect(r, date);
+    const brief = readFile(r, '.nightwatch/MORNING.md');
+    assert.ok(/Progress: \*\*38%\*\*/.test(brief), `expected "38%" in the brief, got:\n${brief.split('\n').find((l) => l.includes('Progress'))}`);
+    assert.ok(!/0\.38%/.test(brief), 'must never print the raw fraction as a percent');
+  },
+
   'brief: global cap enforced, overflow to appendix by priority class': () => {
     const r = tmpRepo();
     const date = '2000-02-01';

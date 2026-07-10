@@ -84,7 +84,7 @@ const markdownOnly = {
     const r = tmpRepo();
     const t = openTracker(r, { tracking: { backend: 'markdown' } }); // no RELEASE.md → template
     t.flush();
-    assert.strictEqual(readFile(r, 'RELEASE.md'), TEMPLATE, 'no-op flush reproduces template bytes');
+    assert.strictEqual(readFile(r, '.nightwatch/RELEASE.md'), TEMPLATE, 'no-op flush reproduces template bytes');
   },
 
   'tracker[markdown]: Notes section and human-edited item text are byte-preserved': () => {
@@ -94,14 +94,14 @@ const markdownOnly = {
     const doc = TEMPLATE
       .replace('## Remaining — implementation\n', `## Remaining — implementation\n${humanLine}\n`)
       .replace(/## Notes \(human-owned — never machine-edited\)[\s\S]*$/, notes);
-    write(r, 'RELEASE.md', doc);
+    write(r, '.nightwatch/RELEASE.md', doc);
 
     const t = openTracker(r, { tracking: { backend: 'markdown' } });
     t.upsertItem({ key: 'new/thing', title: 'a machine-added item', section: 'implementation' });
     t.appendStatus('did a thing', '2000-02-02');
     t.flush();
 
-    const out = readFile(r, 'RELEASE.md');
+    const out = readFile(r, '.nightwatch/RELEASE.md');
     assert.ok(out.includes(humanLine), 'human item line preserved verbatim');
     assert.ok(out.includes('My private release plan.\nLine two.'), 'Notes body preserved verbatim');
     assert.ok(out.includes('a machine-added item'), 'new item rendered');
@@ -113,7 +113,7 @@ const markdownOnly = {
     const a = t.upsertItem({ key: 'work/A', title: 'finish A', section: 'implementation' });
     t.completeItem(a.id);
     t.flush();
-    const out = readFile(r, 'RELEASE.md');
+    const out = readFile(r, '.nightwatch/RELEASE.md');
     const doneIdx = out.indexOf('## Done');
     const implIdx = out.indexOf('## Remaining — implementation');
     const itemIdx = out.indexOf('finish A');
@@ -128,7 +128,7 @@ const markdownOnly = {
     assert.strictEqual(t.setupFindings.length, 1);
     assert.strictEqual(t.setupFindings[0].kind, 'setup');
     assert.match(t.setupFindings[0].title, /Unknown tracking backend "sqlite"/);
-    assert.strictEqual(fs.existsSync(path.join(r, 'RELEASE.md')), false, 'no write happened on open (no migration)');
+    assert.strictEqual(fs.existsSync(path.join(r, '.nightwatch', 'RELEASE.md')), false, 'no write happened on open (no migration)');
   },
 
   // AC — `tracking.backend: beads` with no `bd` on PATH → setup finding naming the missing tool,
@@ -144,10 +144,10 @@ const markdownOnly = {
     assert.strictEqual(t.setupFindings.length, 1);
     assert.strictEqual(t.setupFindings[0].kind, 'setup');
     assert.match(t.setupFindings[0].title, /"bd" on PATH/, 'names the missing tool');
-    assert.strictEqual(fs.existsSync(path.join(r, 'RELEASE.md')), false, 'no partial write on open (no migration)');
+    assert.strictEqual(fs.existsSync(path.join(r, '.nightwatch', 'RELEASE.md')), false, 'no partial write on open (no migration)');
     // A no-op flush after fallback still just serializes the markdown template — no crash.
     t.flush();
-    assert.strictEqual(readFile(r, 'RELEASE.md'), TEMPLATE, 'fallback backend writes clean markdown');
+    assert.strictEqual(readFile(r, '.nightwatch/RELEASE.md'), TEMPLATE, 'fallback backend writes clean markdown');
   },
 
   // backlogmd is likewise recognized and probes for `backlog`.
@@ -160,7 +160,7 @@ const markdownOnly = {
     finally { process.env.PATH = savedPath; }
     assert.strictEqual(t.backend, 'markdown');
     assert.match(t.setupFindings[0].title, /"backlog" on PATH/);
-    assert.strictEqual(fs.existsSync(path.join(r, 'RELEASE.md')), false, 'no partial write');
+    assert.strictEqual(fs.existsSync(path.join(r, '.nightwatch', 'RELEASE.md')), false, 'no partial write');
   },
 };
 

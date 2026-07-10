@@ -110,7 +110,9 @@ excluded directory finds out on day one, from the brief, with the fix named.
 
 - No per-job scoping (one scope shared by all three members keeps the model simple).
 - No content-based classification of individual files at run time — scoping is path-based
-  and declared; heuristics run only at `init`, where a human confirms them.
+  and declared; heuristics run only where a human confirms them (at `init`, and — for loose
+  untracked files by name pattern only — at the first-run confirmation screen, see
+  [first-run-ux](first-run-ux.md) P7.4). Never content-based, never silent, never nightly.
 - No change to extractor adapters' own exclusion behavior beyond passing the merged globs.
 
 ## Acceptance criteria

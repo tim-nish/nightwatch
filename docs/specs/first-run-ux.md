@@ -1,11 +1,14 @@
 # Spec: First-run and interactive-run UX for `/nightwatch`
 
-- **Status:** accepted 2026-07-10 — folded into `nightwatch.md` §6 (FR37–FR41 in the
-  epics requirements inventory). Exception: the signals-only `--dry-run` tier in P5 is
-  **deferred**, not accepted. Implementation pending (Epic 6).
+- **Status:** FR37–FR41 accepted 2026-07-10 and **implemented in Epic 6** (merged). The
+  signals-only `--dry-run` tier in P5 remains **deferred**, not accepted. **P7 (first-run
+  confirmation-screen refinements)** is a second-round addition from finding 0007 — accepted
+  2026-07-10 and **folded into `nightwatch.md` §6 (FR45–FR47)**; implementation pending
+  (Epic 7 candidate).
 - **Motivated by:** dogfooding findings
-  [0001 — First run gives no visibility](../dogfooding/0001-first-run-visibility.md) and
-  [0005 — No preview of analysis scope](../dogfooding/0005-analysis-scope-preview.md)
+  [0001 — First run gives no visibility](../dogfooding/0001-first-run-visibility.md),
+  [0005 — No preview of analysis scope](../dogfooding/0005-analysis-scope-preview.md), and
+  [0007 — First-run confirmation screen UX](../dogfooding/0007-first-run-confirmation-ux.md) (P7)
 - **Scope:** presentation and consent around the overnight flow in `commands/nightwatch.md`.
   No change to what the jobs analyze, what they write, or the deterministic scheduler.
 
@@ -114,8 +117,9 @@ A way to see what Nightwatch would do at near-zero cost, separate from full orch
   gathering, surface inventory) and show raw counts — "reconcile found 41 claimable surface
   items, 3 candidate disagreements" — without launching any judgment/verification subagents.
   Cost: script execution only, no model budget.
-- `/nightwatch init` step 5 (the post-setup dry run) should present the same P1/P2 plan and
-  the P4 confirmation before its full `--force` night, since that is where most first-time
+- `/nightwatch init` step 5 (the post-setup **initial validation run** — a full `--force` write
+  run, distinct from the deferred signals-only `--dry-run` above) should present the same P1/P2
+  plan and the P4 confirmation before its full `--force` night, since that is where most first-time
   users actually pay the first full budget.
 
 ### P6 — Analysis scope preview in the plan
@@ -146,6 +150,64 @@ Excluded: _bmad/ (312) _bmad-output/ (41) .claude/ (58) q_a/ (6) node_modules/ .
   scope statement (analysis-scope spec, P5), so the information is preserved without
   blocking unattended execution.
 
+### P7 — First-run confirmation screen: clear labels, change preview, classified strays
+
+Motivated by finding [0007](../dogfooding/0007-first-run-confirmation-ux.md). Once the P4 gate
+shipped (Epic 6), the confirmation screen became the first real consent moment — and it may offer
+to exclude untracked files the scope preview (P6) found that would otherwise be analyzed. The four
+refinements below are presentation only; they change no scheduling decision, and — as with P4 — a
+decline still writes nothing, while the config write happens *only* on an affirmative choice and
+*after* the preview in P7.2.
+
+**P7.1 — Plain-language option labels.** The run-with-exclusions choice must say what it does, not
+use internal shorthand. Rename **"Ignore strays, then run" → "Ignore untracked temporary files and
+run."** Avoid "strays" and similar jargon in every user-facing label.
+
+**P7.2 — Preview the exact config change before applying it.** Any option that edits
+`.nightwatch/config.yaml` must show the literal block that will be written, before it is written —
+`config.yaml` is a versioned declaration the user maintains, and a helpful write is still a write:
+
+```yaml
+# will be added to .nightwatch/config.yaml
+ignore:
+  - answer.md
+  - question.md
+  - bash.exe.stackdump
+```
+
+The user confirms *this shown change*; nothing is written if they decline. (Consistent with the
+analysis-scope principle that scoping is a visible, versioned declaration —
+[analysis-scope](analysis-scope.md), P3/P5.)
+
+**P7.3 — Describe the "setup only" option's effect.** State what "setup" writes and that analysis
+can happen later. Rename **"Setup only, don't run" → "Write STATE.md and config.yaml only — run
+/nightwatch later,"** so the "configure now, analyze later" path is legible instead of reading as an
+ambiguous escape hatch. (This is the P5 "configure without spending a night" idea, surfaced as a
+first-class labeled choice.)
+
+**P7.4 — Classify untracked strays into groups, not one list.** When the screen lists untracked
+files it proposes to exclude, group them by likelihood rather than lumping them, so the user can
+accept the obvious junk and decide the genuine documents deliberately:
+
+```
+Untracked files that would otherwise be analyzed:
+  Likely temporary / crash artifacts (safe to ignore):
+    bash.exe.stackdump
+  Untracked documents (review — you may want these analyzed):
+    answer.md   question.md
+```
+
+- Classification is a **light, path/name-based heuristic** run only at this interactive moment where
+  a human confirms it — consistent with the analysis-scope non-goal against run-time content
+  classification (heuristics run only where a human decides). Temporary/crash patterns are things
+  like `*.stackdump`, `core.*`, `*.tmp`, `*.log`, editor swap files; everything else is an "ordinary
+  document" the user reviews.
+- The two groups can be accepted independently, so ignoring a crash dump never forces a decision
+  about a real document (or vice versa).
+- This complements analysis-scope P3 (which classifies dev-tooling *directories* at `init`): P7.4
+  classifies loose *untracked files* at the first-run gate. Both keep exclusion a human-confirmed
+  declaration, never a silent inference.
+
 ## Non-goals
 
 - No change to cadence, budgets, member order, brief assembly, or the ledger.
@@ -171,3 +233,11 @@ Excluded: _bmad/ (312) _bmad-output/ (41) .claude/ (58) q_a/ (6) node_modules/ .
    dirs with counts) computed before any subagent launches, at zero model-token cost; on
    scheduled runs it lands in the run record and the brief's scope line instead of the
    terminal, and never prompts.
+8. Every user-facing option on the first-run confirmation screen names its effect in plain
+   language (no "strays"-style jargon), and the "setup only" choice states that it writes
+   `STATE.md` and `config.yaml` and that `/nightwatch` can be run later (P7.1, P7.3).
+9. Any confirmation-screen option that edits `.nightwatch/config.yaml` shows the exact block
+   it will write before writing it; declining writes nothing (P7.2).
+10. When the screen proposes excluding untracked files, they are shown in at least two groups —
+    likely temporary/crash artifacts vs ordinary untracked documents — acceptable independently
+    (P7.4).

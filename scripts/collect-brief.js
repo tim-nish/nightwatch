@@ -8,9 +8,9 @@
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
-const { parseArgs, repoRoot, todayISO, nwDir, outDir, ensureDir, readFileSafe, readJSONSafe, exists } = require('./lib/util');
+const { parseArgs, repoRoot, todayISO, nwDir, outDir, ensureDir, readFileSafe, readJSONSafe, exists, progressPercent } = require('./lib/util');
 const { readAllFindings } = require('./lib/findings');
-const { openTracker } = require('./lib/tracker');
+const { openTracker, releaseReadPath } = require('./lib/tracker');
 const { loadConfig } = require('./lib/config');
 const { excludedTopDirs } = require('./lib/scope');
 
@@ -40,8 +40,8 @@ function renderItem(f) {
   return `- [ ] \`${f.id}\` (sev${f.severity}) ${f.title}` + (ev ? ` — evidence: ${ev}` : '') + act;
 }
 
-function readReleaseHeader(root) {
-  const text = readFileSafe(path.join(root, 'RELEASE.md'));
+function readReleaseHeader(root, config) {
+  const text = readFileSafe(releaseReadPath(root, config));
   if (!text) return null;
   const m = text.match(/^---\n([\s\S]*?)\n---/);
   let fm = {};
@@ -106,10 +106,10 @@ function collect(root, date, { force = false } = {}) {
   L.push(`# Nightwatch — morning brief (${date})`, '');
 
   // 1. Release-progress delta
-  const rel = readReleaseHeader(root);
+  const rel = readReleaseHeader(root, config);
   L.push('## Release progress');
   if (rel && rel.fm && rel.fm.progress != null) {
-    L.push(`- Progress: **${rel.fm.progress}%** toward ${rel.fm.target || 'release'} (phase: ${rel.fm.phase || 'unset'})`);
+    L.push(`- Progress: **${progressPercent(rel.fm.progress)}%** toward ${rel.fm.target || 'release'} (phase: ${rel.fm.phase || 'unset'})`);
     if (rel.statusLine) L.push(`  ${rel.statusLine.trim()}`);
   } else {
     L.push('- No RELEASE.md yet — run `/release-progress` (or `/nightwatch`) to create it.');

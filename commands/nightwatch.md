@@ -23,9 +23,11 @@ before running anything, and call the result `${NW_ROOT}` for the rest of this f
 **These safety rules bind every member job and you enforce them by contract:**
 
 - Never implement features, never refactor, never modify source code.
-- Write surface, exhaustively: `.nightwatch/**`, `RELEASE.md`, patch files under
+- Write surface, exhaustively: `.nightwatch/**` (now holding `STATE.md`, `RELEASE.md` by default,
+  `config.yaml`, `briefs/`, `ledger.jsonl`, `state.json`, `out/`), the configured **`release_path`**
+  when set outside `.nightwatch/` (e.g. a root or `docs/` `RELEASE.md`), patch files under
   `.nightwatch/out/`, and (opt-in) `nightwatch/*` branches via a **temporary worktree**. Nothing
-  else, ever — never the user's current branch or working tree.
+  else, ever — never the user's current branch or working tree, never the project's root `.gitignore`.
 - Never push, never open PRs or issues, never post externally. No network.
 - Idempotent per date; runs under a permission profile where prompts are impossible.
 
@@ -76,7 +78,7 @@ to `${NW_ROOT}/scripts/init.js` so setup is reproducible and never improvised.
    pass `--no-config` to write `STATE.md` only. Then help the human fill the freshly written
    declarations from the interview answers (authority, phase, release, layers).
 
-6. **Present the plan and dry-run.** Run the overnight flow below with `--force` (a first-run
+6. **Present the plan and initial validation run.** Run the overnight flow below with `--force` (a first-run
    scheduler call reports `gate.required`). Show the plan, estimate, and scope preview — this is
    where the human first sees the confirmed scope take effect and pays the first full budget — ask
    the first-run confirmation, then run each job once and show the first brief. Stop and let the

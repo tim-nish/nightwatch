@@ -101,11 +101,13 @@ carry that guarantee:
    config.
 2. **Two repo-local files carry everything repo-specific.** Both optional; every
    command runs with neither and degrades gracefully (§2.5):
-   - **`STATE.md`** (repo root, human-authored, machine-read): declarations no tool
+   - **`.nightwatch/STATE.md`** (human-authored, machine-read): declarations no tool
      can infer — source-of-truth precedence per area, current phase, release target
      and definition of done, optional layering rules. Free prose plus exactly one
      fenced ` ```yaml ` block that tooling parses; prose outside the block is ignored
-     by machines. Lives at root deliberately: it's a contract with humans too.
+     by machines. Lives beside `config.yaml` under `.nightwatch/` so Nightwatch keeps a
+     single home in the repo (§2.4); a legacy root `STATE.md` is still read for
+     backward compatibility until `init` migrates it.
    - **`.nightwatch/config.yaml`** (operational config, all keys optional): budgets,
      caps, cadences, scoping globs, extractor selection, tracking backend. Defaults
      ship in the plugin; an absent or empty file is valid. Scoping is two-tier:
@@ -176,16 +178,22 @@ nightwatch/
 **A host repo after install + first runs (total footprint):**
 
 ```
-STATE.md                            # human declarations (drafted by /nightwatch init)
-RELEASE.md                          # maintained by /release-progress (markdown backend)
-.nightwatch/
+.nightwatch/                        # Nightwatch's single home (zero Nightwatch files in root by default)
+  STATE.md                          # human declarations (drafted by /nightwatch init)
+  RELEASE.md                        # maintained by /release-progress (default release_path)
   config.yaml                       # optional operational config
   MORNING.md                        # stable path: latest brief (open this)
   briefs/2026-07-08.md              # dated briefs (committed — they're memory)
   ledger.jsonl                      # every finding ever, with acted-on/dismissed marks
   state.json                        # cadence cursors, last-run dates
+  .gitignore                        # nested: ignores out/ without touching the repo's root .gitignore
   out/                              # transient per-run JSON + patch files (gitignored)
 ```
+
+By default **no Nightwatch-owned file lands in the repo root** — the `.nightwatch/`
+directory is the single home. `RELEASE.md` can be relocated to the root (or elsewhere,
+e.g. `docs/`) via `release_path` (§7) for projects that want it as a public deliverable —
+the one opt-in exception.
 
 **Cross-repo coupling: none.** Each installation is self-contained. Multi-repo
 aggregation is explicitly not this plugin's job; a portfolio view would be a separate
@@ -328,7 +336,8 @@ TrackerStore:
   flush()                               // atomic write of whatever the backend owns
 ```
 
-Backends: `markdown` (v0.1 — writes `RELEASE.md` + `ledger.jsonl`), `beads` and
+Backends: `markdown` (v0.1 — writes `RELEASE.md` at `release_path` (default
+`.nightwatch/RELEASE.md`, §7) + `.nightwatch/ledger.jsonl`), `beads` and
 `backlogmd` (future — same interface over `bd` / `backlog` CLIs, subject to the same
 local-only availability probe as extractor adapters). Selected by
 `tracking.backend` in config; an unknown or unavailable backend is a `setup` finding
@@ -557,16 +566,19 @@ behavior against the store interface; the concrete file format below is the
 `markdown` backend's serialization, which is the v0.1 default and the only backend
 shipped.
 
-**Markdown backend: `RELEASE.md` at repo root.** Root, not hidden in `.nightwatch/`,
-because it's the repo's answer to "how close is this?" for humans and future
-collaborators. Markdown with YAML frontmatter for machine fields, fixed section
+**Markdown backend: `RELEASE.md` at `release_path` (default `.nightwatch/RELEASE.md`).**
+Nightwatch keeps a single home under `.nightwatch/` (§2.4), so the release tracker lands
+there by default; a project that wants it as a public root-level deliverable sets
+`release_path: RELEASE.md` (§7). A legacy root `RELEASE.md` is read/adopted until `init`
+migrates it. Markdown with YAML frontmatter for machine fields, fixed section
 headings, stable item ids, and one human-owned section the machine never touches:
 
 ```markdown
 ---
 phase: hardening            # mirrors STATE.md
 target: "v0.1 public release"
-progress: 64                # % of definition-of-done + blockers resolved (derived)
+progress: 0.64              # 0–1 fraction of definition-of-done + blockers resolved (derived);
+                            # stored as a fraction, rendered ×100 as a percent at display time
 updated: 2026-07-08
 ---
 # Release progress
@@ -690,19 +702,42 @@ environment cannot prompt, proceed. From the second run onward there is no gate.
 scheduled runs the plan and scope summary are not printed; they land in
 `out/run-status-<date>.json` and the brief's scope line instead.
 
+**First-run confirmation screen (presentation).** Every option names its effect in plain
+language — no internal jargon (e.g. *"Ignore untracked temporary files and run,"* not
+"ignore strays"). The *setup-only* option states that it writes `.nightwatch/STATE.md` and
+`.nightwatch/config.yaml` and that `/nightwatch` can be run later. Any option that edits
+`config.yaml` **previews the exact block it will write before writing it**; declining writes
+nothing. When the scope preview surfaces untracked files it proposes to exclude, they are
+shown in **groups** — likely temporary/crash artifacts (e.g. `*.stackdump`, `core.*`,
+`*.tmp`) versus ordinary untracked documents — acceptable independently; the grouping is a
+name-pattern heuristic the present human confirms, never a run-time content judgment.
+
 **`init` mode (daytime, interactive — the one mode that may ask questions):** detects
-missing `STATE.md` / config; interviews the human (authority per area, phase, release
-target and definition of done, optional layers); scans the repo root for known
+missing `.nightwatch/STATE.md` / config; interviews the human (authority per area, phase,
+release target and definition of done, optional layers); scans the repo root for known
 dev-tooling conventions plus heuristic candidates (top-level git-tracked directories
 referenced by no product import) and confirms the classification with the human —
 confirmed entries land in `config.yaml` `dev_tooling:`, a declaration, visible and
 versioned, not a hidden default; probes every extractor adapter (§2.6) and offers
 install commands for detected-but-unavailable tools — the only moment tool
-installation is ever suggested; writes both declaration files from templates;
-presents the plan, estimate, and scope preview and asks the first-run confirmation
-(this is where most users pay their first full budget); runs each job once in
-dry-run; shows the first brief. Overnight mode never creates or edits declaration
-files, never reclassifies scoping, and never installs anything.
+installation is ever suggested; writes both declaration files (`.nightwatch/STATE.md`,
+`.nightwatch/config.yaml`) from templates and registers a nested `.nightwatch/.gitignore`
+(never touching the repo's root `.gitignore`); when a legacy root `STATE.md`/`RELEASE.md`
+is present, offers a one-time, human-confirmed, byte-preserving migration into
+`.nightwatch/`; presents the plan, estimate, and scope preview and asks the first-run
+confirmation (this is where most users pay their first full budget); runs each job once as an
+**initial validation run** (a full `--force` write run — not the deferred signals-only
+`--dry-run`); shows the first brief.
+
+`init` is **create-only for declarations**: it instantiates them only where absent, never
+refreshes an existing declaration, and reports each already-existing one in a single line
+(*"already exists — not updated; edit it directly or run `/nightwatch init --update`"*). To
+bring declarations back in sync as the repo evolves, **`/nightwatch init --update`** (daytime,
+interactive, non-destructive) re-runs detection and proposes human-confirmed diffs to the
+existing declarations and `dev_tooling` — applying only confirmed changes, byte-preserving the
+rest — with the declaration and `dev_tooling` write paths unified under one confirm gate.
+Overnight mode never creates or edits declaration files, never reclassifies scoping, and never
+installs anything.
 
 **Brief assembly** (`collect-brief.js` — deterministic, because truncation must be
 mechanical; ranking *within* jobs is the jobs' judgment):
@@ -718,6 +753,10 @@ mechanical; ranking *within* jobs is the jobs' judgment):
   `Scope: <n> files analyzed; excluded <dirs with counts> — edit .nightwatch/config.yaml to change.`
 - One footer line naming both feedback methods:
   `Review interactively with /nightwatch review — or mark boxes by hand: [x] acted on, [-] dismissed.`
+- Config-drift nudge: when a run encounters a **new top-level directory not covered by
+  the resolved product scope, `ignore`, or `dev_tooling`**, one brief line names it and
+  points at `/nightwatch init --update` — detection and reporting only; overnight writes
+  no declarations.
 
 **Morning feedback loop:** brief items render as checkboxes (`acted-on` /
 `dismissed`); the next run backfills the marks into the ledger via
@@ -742,11 +781,14 @@ checkbox editing remains fully supported; the brief's footer names both methods.
 them by contract and its prompt restates them):**
 
 - Never implements features; never refactors; never modifies source code.
-- Write surface, exhaustively: `.nightwatch/**`, `RELEASE.md` (markdown tracking
-  backend), patch files under `out/`, and (opt-in) `nightwatch/*` branches via
-  temporary worktree. Nothing else, ever — never the user's current branch or working
-  tree. A non-markdown tracking backend's write surface is its own store, declared in
-  config.
+- Write surface, exhaustively: `.nightwatch/**` (which now holds `STATE.md`, `RELEASE.md`
+  by default, `config.yaml`, `.gitignore`, briefs, ledger, state, and `out/`), the
+  configured `release_path` when set outside `.nightwatch/` (markdown tracking backend),
+  patch files under `out/`, and (opt-in) `nightwatch/*` branches via temporary worktree.
+  Nothing else, ever — never the user's current branch or working tree, and never the
+  project's root `.gitignore`. `init` migration moves a legacy root `STATE.md`/`RELEASE.md`
+  only with the human's confirmation. A non-markdown tracking backend's write surface is
+  its own store, declared in config.
 - Never pushes, never creates PRs or issues, never posts externally; **no network** —
   which includes never fetching or installing analyzer tools (§2.6); absence
   degrades, it never triggers a download.
@@ -788,12 +830,35 @@ the failure. No brief at all is itself a signal; the collector always attempts a
       the brief carries the scope line.
 - [ ] A user `ignore:` list extends rather than replaces shipped defaults; `!pattern`
       re-includes a default-excluded path with exactly one config entry.
+- [ ] First-run confirmation screen: every option is labelled in plain language; the
+      setup-only option states it writes `.nightwatch/STATE.md` and `.nightwatch/config.yaml`
+      and that `/nightwatch` runs later; any option that edits `config.yaml` previews the
+      exact block before writing; untracked files proposed for exclusion are shown in at
+      least two groups (temporary/crash vs ordinary documents), acceptable independently.
+- [ ] Consolidated layout: a fresh install leaves zero Nightwatch-owned files in the repo
+      root (only `.nightwatch/`); `STATE.md` is read from `.nightwatch/STATE.md` with a
+      legacy-root fallback; `init` creates `.nightwatch/.gitignore` and never edits the
+      root `.gitignore`.
+- [ ] `release_path` (default `.nightwatch/RELEASE.md`) determines where the release report
+      is written and read; `release_path: RELEASE.md` opts into a root deliverable; a legacy
+      root `RELEASE.md` is adopted until migrated, byte-preserved.
+- [ ] `init` on a repo with legacy root `STATE.md`/`RELEASE.md` offers a one-time confirmed
+      migration into `.nightwatch/`; declining leaves the files in place and all reads still
+      succeed; an existing install works with no migration.
+- [ ] `init` is create-only for declarations and reports each already-existing one; a
+      scheduled run reclassifies nothing and writes no declaration files.
+- [ ] `/nightwatch init --update` proposes human-confirmed diffs to existing declarations
+      and `dev_tooling`, applies only confirmed changes byte-preserving the rest, and is
+      idempotent (a no-change repo proposes nothing).
+- [ ] Overnight run on a repo with a new top-level directory not covered by the resolved
+      product scope, `ignore`, or `dev_tooling`: exactly one brief line names it and points
+      at `init --update`; a fully-classified repo emits no such line.
 
 ---
 
 ## 7. Templates (shipped in `templates/`)
 
-**`STATE.md`** — prose header explaining the file, plus the single parsed block:
+**`STATE.md`** (instantiated to `.nightwatch/STATE.md`) — prose header explaining the file, plus the single parsed block:
 
 ```yaml
 authority:
@@ -828,6 +893,8 @@ extractors: auto            # or a list, e.g. [universal-git, node-depcruise]
                             # node_modules/.bin (or venv), then PATH; never installed
 tracking:
   backend: markdown         # v0.1 ships markdown only; future: beads | backlogmd
+release_path: .nightwatch/RELEASE.md   # where the release report lives; set "RELEASE.md"
+                            # (or e.g. "docs/RELEASE.md") to keep it as a root/public deliverable
 layers: []                  # e.g. [{name: core, path: "src/core/**", may_depend_on: []}]
                             # compiled into each available tool's native ruleset (§2.6)
 release_checks: {disable: []}
@@ -835,7 +902,7 @@ patch_branch: false         # true → also apply derived-doc patches on nightwa
 timeout_minutes: 30
 ```
 
-**`RELEASE.md`** — the §5 skeleton with empty sections and the Notes guard comment.
+**`RELEASE.md`** (instantiated at `release_path`, default `.nightwatch/RELEASE.md`) — the §5 skeleton with empty sections and the Notes guard comment.
 
 ---
 

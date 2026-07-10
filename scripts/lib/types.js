@@ -90,6 +90,8 @@
  * @property {string} extractors
  * @property {LayerRule[]} layers
  * @property {{ disable: string[] }} release_checks
+ * @property {string} release_path Repo-relative path the tracker writes/reads RELEASE.md at
+ *   (default `.nightwatch/RELEASE.md`; a legacy root `RELEASE.md` is adopted until migrated).
  * @property {{ backend: string }} tracking Tracking store backend selector (default `markdown`).
  * @property {boolean} patch_branch
  * @property {number} timeout_minutes
@@ -105,7 +107,7 @@
  * @property {Record<string, any> | null} release
  * @property {LayerRule[]} layers
  * @property {string[]} degraded
- * @property {{ config_yaml: boolean, state_md: boolean }} sources
+ * @property {{ config_yaml: boolean, state_md: boolean, state_md_path: string | null }} sources
  * @property {string | null} [stateText]
  */
 

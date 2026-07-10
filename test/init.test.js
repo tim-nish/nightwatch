@@ -38,7 +38,7 @@ module.exports = {
     assert.deepStrictEqual(rep.map((r) => [r.file, r.written, r.reason]),
       [['state', true, 'created'], ['config', true, 'created']]);
     // ...and their bytes came verbatim from the shipped templates (provenance).
-    assert.strictEqual(readFile(root, 'STATE.md'), shippedTemplate('STATE.md'), 'STATE.md is the template');
+    assert.strictEqual(readFile(root, '.nightwatch/STATE.md'), shippedTemplate('STATE.md'), 'STATE.md is the template');
     assert.strictEqual(readFile(root, '.nightwatch/config.yaml'), shippedTemplate('config.yaml'), 'config.yaml is the template');
   },
 
@@ -79,7 +79,7 @@ module.exports = {
     const res = JSON.parse(stdout);
     assert.strictEqual(res.status, 'ok');
     assert.ok(res.declarations.every((d) => d.written), 'both declarations created');
-    assert.strictEqual(readFile(root, 'STATE.md'), shippedTemplate('STATE.md'));
+    assert.strictEqual(readFile(root, '.nightwatch/STATE.md'), shippedTemplate('STATE.md'));
     assert.strictEqual(readFile(root, '.nightwatch/config.yaml'), shippedTemplate('config.yaml'));
     assert.ok(Array.isArray(res.probe), 'probe report present in CLI output');
   },
@@ -135,7 +135,7 @@ module.exports = {
     gitInit(root); commit(root, 'init');
     const res = runInit(root, { probeOnly: true, adapters: [fakeAdapter({ name: 'x' })] });
     assert.deepStrictEqual(res.declarations, [], 'no declarations written on a probe-only pass');
-    assert.strictEqual(readFile(root, 'STATE.md'), null, 'STATE.md not created');
+    assert.strictEqual(readFile(root, '.nightwatch/STATE.md'), null, 'STATE.md not created');
     assert.strictEqual(readFile(root, '.nightwatch/config.yaml'), null, 'config.yaml not created');
   },
 
@@ -148,14 +148,14 @@ module.exports = {
 
     runScript('orchestrate.js', root, { date: '2026-07-09' });
 
-    assert.strictEqual(readFile(root, 'STATE.md'), null, 'overnight run created no STATE.md');
+    assert.strictEqual(readFile(root, '.nightwatch/STATE.md'), null, 'overnight run created no STATE.md');
     assert.strictEqual(readFile(root, '.nightwatch/config.yaml'), null, 'overnight run created no config.yaml');
     // Every change stays under .nightwatch/ and none is a declaration file.
     const changed = git(root, ['status', '--porcelain']).split('\n').map((l) => l.trim()).filter(Boolean)
       .map((l) => l.replace(/^\S+\s+/, ''));
     for (const p of changed) {
       assert.ok(p.startsWith('.nightwatch/'), `overnight wrote outside surface: ${p}`);
-      assert.ok(p !== 'STATE.md' && p !== '.nightwatch/config.yaml', `overnight touched a declaration: ${p}`);
+      assert.ok(p !== '.nightwatch/STATE.md' && p !== '.nightwatch/config.yaml', `overnight touched a declaration: ${p}`);
     }
   },
 };

@@ -88,8 +88,10 @@ All commands accept `[--repo .] [--force]`.
    the install command — the only moment Nightwatch ever suggests installing anything.
 2. **Interviews you** for the declarations no tool can infer: source-of-truth authority per
    area, project phase, release target and definition of done, optional layering rules.
-3. **Writes `STATE.md` and `.nightwatch/config.yaml`** from templates — only where absent;
-   existing files are never clobbered — and adds `.nightwatch/out/` to `.gitignore`.
+3. **Writes `.nightwatch/STATE.md` and `.nightwatch/config.yaml`** from templates — only where
+   absent; existing files (including a legacy root `STATE.md`) are never clobbered — and ignores
+   `.nightwatch/out/`. Nightwatch keeps its files under `.nightwatch/` and writes zero files to the
+   repo root by default (the only opt-in root artifact is `RELEASE.md`, via `release_path`).
 4. **Dry-runs the jobs once** and shows you your first brief while you're there to review it.
 
 Init is optional but not cosmetic. **Without it, Nightwatch runs in a degraded,
@@ -125,9 +127,10 @@ Two optional repo-local files, both drafted for you by `init` (see
 detection-only mode described above — undeclared inputs become one-line setup findings, never
 guesses.
 
-- **`STATE.md`** (repo root) — human declarations no tool can infer: which artifact is the
+- **`.nightwatch/STATE.md`** — human declarations no tool can infer: which artifact is the
   source of truth per area, project phase, release target and definition of done, optional
-  layering rules. Template: [`templates/STATE.md`](templates/STATE.md).
+  layering rules. A legacy root `STATE.md` is still read (the nested copy wins when both exist).
+  Template: [`templates/STATE.md`](templates/STATE.md).
 - **`.nightwatch/config.yaml`** — operational config: cadences, token budgets, brief caps,
   ignore globs, extractor selection. Every key is optional.
   Template with defaults: [`templates/config.yaml`](templates/config.yaml).

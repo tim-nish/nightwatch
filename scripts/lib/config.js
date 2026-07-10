@@ -27,6 +27,11 @@ const DEFAULTS = Object.freeze({
   layers: [],
   release_checks: { disable: [] },
   tracking: { backend: 'markdown' },
+  // Where the release tracker writes/reads RELEASE.md (repo-relative). Default keeps it under
+  // .nightwatch/ so a fresh install leaves zero Nightwatch-owned files in the repo root (FR49);
+  // set to `RELEASE.md` (root) or e.g. `docs/RELEASE.md` for a public deliverable. Resolution and
+  // the legacy-root fallback live in tracker.js (releaseReadPath/releaseWritePath).
+  release_path: '.nightwatch/RELEASE.md',
   patch_branch: false,
   timeout_minutes: 30,
 });
@@ -62,7 +67,7 @@ function parseStateBlock(text) {
 function loadConfig(root) {
   const degraded = [];
   const config = clone(DEFAULTS);
-  const sources = { config_yaml: false, state_md: false };
+  const sources = { config_yaml: false, state_md: false, state_md_path: null };
   // Raw user scoping lists, captured before deepMerge (which would replace the arrays). The two
   // scoping tiers EXTEND their shipped defaults instead of replacing them (FR42), so they are
   // resolved separately at the end. STATE.md wins over config.yaml, matching every other key.
@@ -81,7 +86,14 @@ function loadConfig(root) {
     } catch (e) { degraded.push('.nightwatch/config.yaml unparseable: ' + e.message); }
   }
 
-  const stateText = readFileSafe(path.join(root, 'STATE.md'));
+  // STATE.md read precedence: .nightwatch/STATE.md → legacy root STATE.md (FR48). The first that
+  // exists is parsed; the resolved repo-relative path is recorded in `sources` for reporting.
+  let statePath = null, stateText = null;
+  for (const cand of ['.nightwatch/STATE.md', 'STATE.md']) {
+    const text = readFileSafe(path.join(root, ...cand.split('/')));
+    if (text != null) { statePath = cand; stateText = text; break; }
+  }
+  sources.state_md_path = statePath;
   const { data: state, error: stateErr } = parseStateBlock(stateText);
   if (stateErr) degraded.push('STATE.md yaml block unparseable: ' + stateErr);
   let authority = null, phase = null, release = null;

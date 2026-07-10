@@ -50,7 +50,7 @@ module.exports = {
     const r = tmpRepo();
     write(r, 'a.js', 'const x = 1;');
     const res = releaseProgress(r, { date: '2026-01-01' });
-    const doc = readFile(r, 'RELEASE.md');
+    const doc = readFile(r, '.nightwatch/RELEASE.md');
     assert.ok(doc, 'RELEASE.md created');
     const fm = frontmatter(doc);
     assert.match(String(fm.notice), /generic criteria — declare `release:` in STATE\.md/);
@@ -68,7 +68,7 @@ module.exports = {
     write(r, 'STATE.md', STATE_WITH_RELEASE);
     write(r, 'a.js', '1');
     releaseProgress(r, { date: '2026-01-01' });
-    const d1 = readFile(r, 'RELEASE.md');
+    const d1 = readFile(r, '.nightwatch/RELEASE.md');
     const fm = frontmatter(d1);
     assert.strictEqual(fm.target, 'My Target v9', 'target read from STATE');
     assert.ok(fm.notice == null, 'notice dropped once release: is declared');
@@ -76,7 +76,7 @@ module.exports = {
     assert.ok(!d1.includes('Provide a LICENSE'), 'DoD line folded onto the generic LICENSE item (no duplicate)');
     // Second night, nothing changed → ids of existing items are unchanged.
     releaseProgress(r, { date: '2026-01-02' });
-    const d2 = readFile(r, 'RELEASE.md');
+    const d2 = readFile(r, '.nightwatch/RELEASE.md');
     const id1 = nwIdOf(d1, 'All commands have specs');
     const id2 = nwIdOf(d2, 'All commands have specs');
     assert.ok(id1 && id1 === id2, `DoD item id stable across runs (${id1} vs ${id2})`);
@@ -91,7 +91,7 @@ module.exports = {
     write(r, 'LICENSE', 'MIT');
     const res2 = releaseProgress(r, { date: '2026-01-02' });
     assert.ok(res2.progress > res1.progress, `progress increased ${res1.progress} -> ${res2.progress}`);
-    const doc = readFile(r, 'RELEASE.md');
+    const doc = readFile(r, '.nightwatch/RELEASE.md');
     assert.match(doc, /- \[x\] Ship a LICENSE file — evidence: LICENSE/, 'completed with closing evidence');
     assert.match(doc, /2026-01-02 — completed: Ship a LICENSE file/, 'dated status line records completion');
     const next = section(doc, 'Next actions (top 3)');
@@ -104,10 +104,10 @@ module.exports = {
     const r = tmpRepo();
     const tenLines = Array.from({ length: 10 }, (_, i) => `- 2025-01-${String(i + 1).padStart(2, '0')} — seeded ${i + 1}`).join('\n');
     const seeded = TEMPLATE.replace('- 1970-01-01 — tracker initialized from template', tenLines);
-    write(r, 'RELEASE.md', seeded);
+    write(r, '.nightwatch/RELEASE.md', seeded);
     write(r, 'LICENSE', 'MIT');
     releaseProgress(r, { date: '2026-05-02' });
-    const doc = readFile(r, 'RELEASE.md');
+    const doc = readFile(r, '.nightwatch/RELEASE.md');
     const body = section(doc, 'Status update (latest first, capped at 10 entries)');
     const count = (body.match(/^- \d{4}-\d{2}-\d{2} —/gm) || []).length;
     assert.ok(count <= 10, `capped at 10, got ${count}`);
@@ -125,10 +125,10 @@ module.exports = {
     const doc0 = TEMPLATE
       .replace('## Remaining — implementation\n', `## Remaining — implementation\n${humanGood}\n${humanStale}\n`)
       .replace(/## Notes \(human-owned — never machine-edited\)[\s\S]*$/, notes);
-    write(r, 'RELEASE.md', doc0);
+    write(r, '.nightwatch/RELEASE.md', doc0);
 
     const outs = [];
-    for (let i = 0; i < 5; i++) { releaseProgress(r, { date: '2026-02-02' }); outs.push(readFile(r, 'RELEASE.md')); }
+    for (let i = 0; i < 5; i++) { releaseProgress(r, { date: '2026-02-02' }); outs.push(readFile(r, '.nightwatch/RELEASE.md')); }
     for (let i = 1; i < 5; i++) assert.strictEqual(outs[i], outs[0], `run ${i + 1} byte-identical to run 1`);
 
     const out = outs[0];
@@ -144,9 +144,9 @@ module.exports = {
     const r = tmpRepo();
     write(r, 'x.js', '1');
     releaseProgress(r, { date: '2026-03-01' });
-    const a = readFile(r, 'RELEASE.md');
+    const a = readFile(r, '.nightwatch/RELEASE.md');
     const res = releaseProgress(r, { date: '2026-03-02' });
-    const b = readFile(r, 'RELEASE.md');
+    const b = readFile(r, '.nightwatch/RELEASE.md');
     assert.ok(res.noChange, 'flagged as a no-change night');
     assert.notStrictEqual(a, b);
     const bFixed = b.replace('updated: 2026-03-02', 'updated: 2026-03-01').replace('- 2026-03-02 — no change\n', '');
@@ -166,7 +166,7 @@ module.exports = {
       { id: 'AR-dec151', kind: 'decision', severity: 3, title: 'Pick a single auth model before release', evidence: [{ path: 'src/auth.js' }], action: 'human-decision', verified: true },
     ]);
     const res = releaseProgress(r, { date: '2026-06-01' });
-    const doc = readFile(r, 'RELEASE.md');
+    const doc = readFile(r, '.nightwatch/RELEASE.md');
     const blockers = section(doc, 'Release blockers');
     const decisions = section(doc, 'Human decisions needed');
     assert.match(blockers, /Quickstart command errors on a fresh clone \(RC-b10c1a\)/, 'blocker promoted with id cross-reference');
@@ -188,10 +188,10 @@ module.exports = {
       { id: 'RC-b10c1a', kind: 'blocker', severity: 1, title: 'Quickstart command errors', evidence: [{ path: 'README.md', line: 12 }], action: 'none', verified: true },
     ]);
     releaseProgress(r, { date: '2026-06-01' });
-    let doc = readFile(r, 'RELEASE.md');
+    let doc = readFile(r, '.nightwatch/RELEASE.md');
     // Hand-add the human blocker into the same section after night 1.
     doc = doc.replace('## Release blockers\n', `## Release blockers\n${humanBlocker}\n`);
-    write(r, 'RELEASE.md', doc);
+    write(r, '.nightwatch/RELEASE.md', doc);
     const promotedId = nwIdOf(doc, 'Quickstart command errors');
     assert.ok(promotedId, 'promoted blocker has an id');
     const blockers1 = section(doc, 'Release blockers');
@@ -200,7 +200,7 @@ module.exports = {
     // Night 2: reconcile reran (doc present) and no longer reports the finding → auto-clear.
     writeForeign(r, 'repo-reconcile', '2026-06-02', []);
     const res2 = releaseProgress(r, { date: '2026-06-02' });
-    const doc2 = readFile(r, 'RELEASE.md');
+    const doc2 = readFile(r, '.nightwatch/RELEASE.md');
     const done = section(doc2, 'Done');
     assert.match(done, /- \[x\] Quickstart command errors \(RC-b10c1a\) — evidence: \.nightwatch\/out\/repo-reconcile-2026-06-02\.json/, 'cleared to Done with closing evidence');
     assert.strictEqual(nwIdOf(done, 'Quickstart command errors'), promotedId, 'promoted item id stable across the clear');
@@ -221,7 +221,7 @@ module.exports = {
     releaseProgress(r, { date: '2026-07-01' });
     // Night 2: no reconcile doc at all → job did not run → keep the blocker open.
     releaseProgress(r, { date: '2026-07-02' });
-    const doc2 = readFile(r, 'RELEASE.md');
+    const doc2 = readFile(r, '.nightwatch/RELEASE.md');
     const blockers = section(doc2, 'Release blockers');
     assert.match(blockers, /- \[ \] Quickstart command errors \(RC-b10c1a\)/, 'blocker still open when its job did not rerun');
     assert.ok(!/- \[x\] Quickstart command errors/.test(doc2), 'not moved to Done');
@@ -244,11 +244,11 @@ module.exports = {
       'oops I deleted the closing fence',
       '',
     ].join('\n');
-    write(r, 'RELEASE.md', malformed);
+    write(r, '.nightwatch/RELEASE.md', malformed);
     const res = releaseProgress(r, { date: '2026-01-06' });
     assert.strictEqual(res.wrote, false, 'nothing written');
     assert.strictEqual(res.malformed, true);
-    assert.strictEqual(readFile(r, 'RELEASE.md'), malformed, 'RELEASE.md left byte-identical');
+    assert.strictEqual(readFile(r, '.nightwatch/RELEASE.md'), malformed, 'RELEASE.md left byte-identical');
     const setup = res.findings.find((f) => f.kind === 'setup');
     assert.ok(setup, 'a setup finding is emitted');
     assert.match(setup.title, /frontmatter/i, 'setup finding points at the parse error');
@@ -267,7 +267,7 @@ module.exports = {
     const stateBefore = readFile(r, 'STATE.md');
     releaseProgress(r, { date: '2026-04-01' });
     assert.strictEqual(readFile(r, 'STATE.md'), stateBefore, 'STATE.md is never written by the job');
-    const doc = readFile(r, 'RELEASE.md');
+    const doc = readFile(r, '.nightwatch/RELEASE.md');
     assert.strictEqual(frontmatter(doc).target, 'My Target v9', 'target mirrors STATE, not invented');
     // No .nightwatch/out job docs were required for the run to succeed (standalone).
     assert.ok(doc.includes('## Next actions'));

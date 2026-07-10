@@ -20,6 +20,9 @@ dev_tooling: []             # develops the product but is not the product; exten
 extractors: auto            # or a list, e.g. [node, python]
 layers: []                  # e.g. [{name: core, path: "src/core/**", may_depend_on: []}]
 release_checks: {disable: []}   # e.g. [changelog] ; also: {todo_threshold: 40}
+release_path: .nightwatch/RELEASE.md   # where the tracker writes RELEASE.md; default keeps the
+                            # repo root clean. Set to RELEASE.md (root) or docs/RELEASE.md for a
+                            # public deliverable. A legacy root RELEASE.md is read until migrated.
 tracking: {backend: markdown}   # tracker/ledger store backend (markdown ships; others opt-in)
 patch_branch: false         # true -> also apply derived-doc patches on nightwatch/* branches
 timeout_minutes: 30

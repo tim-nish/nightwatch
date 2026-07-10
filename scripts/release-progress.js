@@ -14,10 +14,10 @@
 // the findings JSON output the brief/ledger consume.
 const path = require('path');
 const yaml = require('js-yaml');
-const { parseArgs, repoRoot, todayISO, outDir, writeJSON, readFileSafe, exists } = require('./lib/util');
+const { parseArgs, repoRoot, todayISO, outDir, writeJSON, readFileSafe, exists, toFraction, progressPercent } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
 const { releaseChecks } = require('./release-checks');
-const { openTracker, itemId } = require('./lib/tracker');
+const { openTracker, itemId, releaseReadPath } = require('./lib/tracker');
 const { makeFinding, SCHEMA_VERSION, readFindings } = require('./lib/findings');
 
 // The header note stamped when there is no declared `release:` block — a coarse, honest signal
@@ -104,7 +104,7 @@ function safeReadForeign(root, job, date) {
 function buildBrief({ progress, prevProgress, target, newBlockers, newDecisions, next, noChange }) {
   const delta = progress - prevProgress;
   const L = [];
-  L.push(`Release progress: ${progress}% toward ${target} (${delta >= 0 ? '+' : ''}${delta} since last run).`);
+  L.push(`Release progress: ${progressPercent(progress)}% toward ${target} (${delta >= 0 ? '+' : ''}${Math.round(delta * 100)} since last run).`);
   L.push(`New blockers: ${newBlockers.length ? newBlockers.map((f) => f.id).join(', ') : 'none'}.`);
   L.push(`New decisions: ${newDecisions.length ? newDecisions.map((f) => f.id).join(', ') : 'none'}.`);
   if (noChange) L.push('No material change since last run.');
@@ -134,7 +134,7 @@ function releaseProgress(root, opts = {}) {
   const force = !!opts.force;
   const { config, release, degraded } = loadConfig(root);
 
-  const releaseText = readFileSafe(path.join(root, 'RELEASE.md'));
+  const releaseText = readFileSafe(releaseReadPath(root, config));
 
   // Malformed hand-edit (frontmatter fence gone) → write nothing, surface a setup finding, and let
   // the brief carry last night's snapshot with an explicit staleness notice (normative safety rule).
@@ -145,14 +145,16 @@ function releaseProgress(root, opts = {}) {
       title: 'RELEASE.md lost its frontmatter — repair by hand or delete it to regenerate',
       locus: 'release:malformed', evidence: [{ path: 'RELEASE.md' }], extra: undefined,
     });
-    const pm = releaseText.match(/^progress:\s*(\d+)\b/m);
+    const pm = releaseText.match(/^progress:\s*([\d.]+)/m);
     const um = releaseText.match(/^updated:\s*(\d{4}-\d{2}-\d{2})\b/m);
+    // Recovered best-effort from a broken frontmatter line; progressPercent() renders either a
+    // fraction (0.42) or a legacy percent (42) as the same "42%".
     const staleProgress = pm ? Number(pm[1]) : null;
     const asOf = um ? um[1] : 'an unknown date';
     const brief = [
       'RELEASE.md is malformed (frontmatter broken by a hand-edit) — showing last night\'s snapshot; NOT refreshed tonight.',
       staleProgress != null
-        ? `Release progress (stale, as of ${asOf}): ${staleProgress}%.`
+        ? `Release progress (stale, as of ${asOf}): ${progressPercent(staleProgress)}%.`
         : 'Release progress (stale): unknown — last snapshot unreadable.',
       'Repair RELEASE.md by hand or delete it to regenerate; nothing was written tonight.',
     ];
@@ -160,7 +162,9 @@ function releaseProgress(root, opts = {}) {
   }
 
   const prevFm = parseFrontmatter(releaseText != null ? releaseText : '');
-  const prevProgress = Number.isFinite(prevFm.progress) ? Number(prevFm.progress) : 0;
+  // Normalize the prior value into the 0–1 fraction contract (a legacy percent like 64 → 0.64),
+  // so the delta is computed fraction-to-fraction even on a repo written before this contract.
+  const prevProgress = toFraction(prevFm.progress);
   // js-yaml coerces an unquoted ISO date to a Date, so read `updated:` as raw text instead.
   const fmText = releaseText ? (releaseText.match(/^---\n([\s\S]*?)\n---/) || [null, ''])[1] : '';
   const um = fmText.match(/^updated:\s*(\d{4}-\d{2}-\d{2})\b/m);
@@ -312,10 +316,13 @@ function releaseProgress(root, opts = {}) {
     if (!prior || prior.title !== title) store.upsertItem({ key, title, section: 'next' });
   }
 
-  // ---- Coarse, honest progress: fraction of (definition-of-done items + blockers) resolved ----
+  // ---- Coarse, honest progress: fraction (0–1) of (definition-of-done items + blockers) resolved.
+  // Stored as a fraction (the internal contract); rendered as a percent only at the display
+  // boundary via progressPercent(). Rounded to 2 decimals so the frontmatter stays clean and its
+  // percent is exact. ----
   const tracked = store.listItems().filter((it) => ['implementation', 'documentation', 'blockers'].includes(it.section) && !isStale(it.title));
   const doneCount = tracked.filter((it) => it.status === 'done').length;
-  const progress = tracked.length ? Math.round((100 * doneCount) / tracked.length) : 0;
+  const progress = tracked.length ? Math.round((100 * doneCount) / tracked.length) / 100 : 0;
   const delta = progress - prevProgress;
 
   const targetChanged = declaredTarget != null && declaredTarget !== prevTarget;
@@ -329,7 +336,7 @@ function releaseProgress(root, opts = {}) {
       store.appendStatus(`completed: ${c.title}${ev ? ` (evidence: ${ev})` : ''}`, date);
     }
     if (!completedThisRun.length) {
-      store.appendStatus(`progress ${progress}% (${delta >= 0 ? '+' : ''}${delta}); ${addedThisRun.length} new item(s)`, date);
+      store.appendStatus(`progress ${progressPercent(progress)}% (${delta >= 0 ? '+' : ''}${Math.round(delta * 100)}); ${addedThisRun.length} new item(s)`, date);
     }
     // Mirror the human-declared target from STATE (never invent one) alongside progress/notice.
     const headPatch = { progress, updated: date, notice };
