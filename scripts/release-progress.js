@@ -17,7 +17,7 @@ const yaml = require('js-yaml');
 const { parseArgs, repoRoot, todayISO, outDir, writeJSON, readFileSafe, exists, toFraction, progressPercent } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
 const { releaseChecks } = require('./release-checks');
-const { openTracker, itemId } = require('./lib/tracker');
+const { openTracker, itemId, releaseReadPath } = require('./lib/tracker');
 const { makeFinding, SCHEMA_VERSION, readFindings } = require('./lib/findings');
 
 // The header note stamped when there is no declared `release:` block — a coarse, honest signal
@@ -134,7 +134,7 @@ function releaseProgress(root, opts = {}) {
   const force = !!opts.force;
   const { config, release, degraded } = loadConfig(root);
 
-  const releaseText = readFileSafe(path.join(root, 'RELEASE.md'));
+  const releaseText = readFileSafe(releaseReadPath(root, config));
 
   // Malformed hand-edit (frontmatter fence gone) → write nothing, surface a setup finding, and let
   // the brief carry last night's snapshot with an explicit staleness notice (normative safety rule).

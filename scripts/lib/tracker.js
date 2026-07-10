@@ -9,7 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { nwDir, ensureDir, readFileSafe } = require('./util');
+const { nwDir, ensureDir, readFileSafe, exists } = require('./util');
 const { dedupeFindings } = require('./findings');
 
 /** @typedef {import('./types').EvidenceItem} EvidenceItem */
@@ -236,8 +236,35 @@ function writeAtomic(file, text) {
   fs.renameSync(tmp, file);
 }
 
-function loadReleaseText(root) {
-  const existing = readFileSafe(path.join(root, 'RELEASE.md'));
+const DEFAULT_RELEASE_PATH = '.nightwatch/RELEASE.md';
+const LEGACY_RELEASE_PATH = 'RELEASE.md';
+
+/**
+ * Absolute path the tracker WRITES RELEASE.md to — the configured `release_path` (repo-relative),
+ * defaulting under `.nightwatch/` so a fresh install writes zero root files (FR49).
+ * @param {string} root @param {{ release_path?: string }} [config]
+ */
+function releaseWritePath(root, config) {
+  const rel = (config && config.release_path) || DEFAULT_RELEASE_PATH;
+  return path.resolve(root, rel);
+}
+
+/**
+ * Absolute path the tracker READS RELEASE.md from. Normally the write path; but when that file is
+ * absent and a legacy root `RELEASE.md` exists, the legacy file is adopted (read byte-for-byte) so
+ * an existing install keeps its history until migration (Story 7.2) relocates it (FR49).
+ * @param {string} root @param {{ release_path?: string }} [config]
+ */
+function releaseReadPath(root, config) {
+  const write = releaseWritePath(root, config);
+  if (exists(write)) return write;
+  const legacy = path.resolve(root, LEGACY_RELEASE_PATH);
+  if (legacy !== write && exists(legacy)) return legacy;
+  return write;
+}
+
+function loadReleaseText(readPath) {
+  const existing = readFileSafe(readPath);
   if (existing != null) return existing;
   const tmpl = readFileSafe(TEMPLATE_PATH);
   return tmpl != null ? tmpl : '';
@@ -318,7 +345,7 @@ function renderRelease(model, core) {
 /**
  * Open a tracking store for a repo.
  * @param {string} repo Repo root.
- * @param {{ tracking?: { backend?: string } }} [config]
+ * @param {{ tracking?: { backend?: string }, release_path?: string }} [config]
  * @returns {object} TrackerStore
  */
 function openTracker(repo, config) {
@@ -389,8 +416,10 @@ function openTracker(repo, config) {
     });
   }
 
-  // markdown backend
-  const releaseText = loadReleaseText(repo);
+  // markdown backend — resolve the release_path once (with legacy-root adoption for reads).
+  const writePath = releaseWritePath(repo, config);
+  const readPath = releaseReadPath(repo, config);
+  const releaseText = loadReleaseText(readPath);
   const model = parseRelease(releaseText);
   const core = makeCore(seedFromRelease(model));
   return Object.assign(core, {
@@ -448,8 +477,10 @@ function openTracker(repo, config) {
     },
     flush() {
       const text = renderRelease(model, core);
-      writeAtomic(path.join(repo, 'RELEASE.md'), text);
-      return { backend: 'markdown', bytes: text.length };
+      // Always write to the resolved release_path (default under .nightwatch/); the atomic temp
+      // lands beside it, so it never appears in the repo root (FR49).
+      writeAtomic(writePath, text);
+      return { backend: 'markdown', bytes: text.length, path: writePath };
     },
   });
 }
@@ -464,4 +495,5 @@ function toLedgerRow(f, meta) {
 module.exports = {
   openTracker, itemId, parseRelease, renderRelease, seedFromRelease,
   KNOWN_BACKENDS, RECOGNIZED_BACKENDS, SECTIONS, HEADING_BY_SECTION, ledgerPath,
+  releaseReadPath, releaseWritePath, DEFAULT_RELEASE_PATH,
 };

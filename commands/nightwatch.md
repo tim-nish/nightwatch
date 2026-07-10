@@ -23,9 +23,11 @@ before running anything, and call the result `${NW_ROOT}` for the rest of this f
 **These safety rules bind every member job and you enforce them by contract:**
 
 - Never implement features, never refactor, never modify source code.
-- Write surface, exhaustively: `.nightwatch/**`, `RELEASE.md`, patch files under
+- Write surface, exhaustively: `.nightwatch/**` (now holding `STATE.md`, `RELEASE.md` by default,
+  `config.yaml`, `briefs/`, `ledger.jsonl`, `state.json`, `out/`), the configured **`release_path`**
+  when set outside `.nightwatch/` (e.g. a root or `docs/` `RELEASE.md`), patch files under
   `.nightwatch/out/`, and (opt-in) `nightwatch/*` branches via a **temporary worktree**. Nothing
-  else, ever — never the user's current branch or working tree.
+  else, ever — never the user's current branch or working tree, never the project's root `.gitignore`.
 - Never push, never open PRs or issues, never post externally. No network.
 - Idempotent per date; runs under a permission profile where prompts are impossible.
 

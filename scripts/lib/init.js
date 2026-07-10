@@ -34,8 +34,12 @@ const TEMPLATES_DIR = path.join(__dirname, '..', '..', 'templates');
 const OUT_IGNORE = '.nightwatch/out/';
 
 // Shipped declaration templates init instantiates: source template -> repo-relative (POSIX) dest.
+// Each declaration's canonical `dest` sits under .nightwatch/. `legacy` is a pre-consolidation
+// root location that still counts as "already present" (FR48) — so re-running init on an existing
+// root-`STATE.md` install never creates a shadowing `.nightwatch/STATE.md` (the config reader
+// prefers the nested copy). Relocating a legacy file is Story 7.2's confirmed migration, not init.
 const DECLARATIONS = [
-  { key: 'state', template: 'STATE.md', dest: 'STATE.md' },
+  { key: 'state', template: 'STATE.md', dest: '.nightwatch/STATE.md', legacy: 'STATE.md' },
   { key: 'config', template: 'config.yaml', dest: '.nightwatch/config.yaml' },
 ];
 
@@ -60,9 +64,11 @@ function writeDeclarations(root, opts = {}) {
   for (const d of DECLARATIONS) {
     if (d.key === 'config' && !writeConfig) continue;
     const abs = path.join(root, ...d.dest.split('/'));
-    if (exists(abs)) {
+    const legacyAbs = d.legacy ? path.join(root, ...d.legacy.split('/')) : null;
+    if (exists(abs) || (legacyAbs && exists(legacyAbs))) {
+      // Present at the nested dest OR a legacy root location → never clobber, never shadow.
       report.push({ file: d.key, dest: d.dest, written: false, reason: 'exists' });
-      continue; // never clobber an existing declaration
+      continue;
     }
     ensureDir(path.dirname(abs));
     fs.writeFileSync(abs, readTemplate(d.template));
