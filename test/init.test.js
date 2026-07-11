@@ -139,15 +139,13 @@ module.exports = {
     // Provenance: byte-identical to the shipped template.
     const readme = readFile(root, '.nightwatch/README.md');
     assert.strictEqual(readme, shippedTemplate('nightwatch-readme.md'), 'README is the template verbatim');
-    // The three tier headings and the MORNING.md copy-wording are present (guards the template).
+    // The four-column map (Story 9.7): the three when-to-open tiers, the column header, and the
+    // STATE.md / cursors.json disarming line updated for the new name.
     assert.match(readme, /Read \(morning\)/);
     assert.match(readme, /Edit \(daytime/);
     assert.match(readme, /Machine memory \(never open\)/);
-    assert.match(readme, /byte-identical copy of the newest dated brief/, 'MORNING.md described as a copy');
-    // state.json vs STATE.md disarming line, back-to-back.
-    assert.match(readme, /Unrelated despite the name/);
-    // out/ patch exception.
-    assert.match(readme, /except `\*\.patch`/, 'out/ patch exception stated');
+    assert.match(readme, /\| edit\? \| owner \| safe to delete\? \| committed\? \|/, 'four-column header');
+    assert.match(readme, /`STATE\.md` is yours; `runtime\/cursors\.json` is the machine's scheduling cursor/);
   },
 
   'init: README is write-if-absent — recreated if deleted, an existing (edited) one left untouched': () => {
@@ -182,25 +180,25 @@ module.exports = {
     assert.strictEqual(readFile(root, '.nightwatch/README.md'), null, 'README not created');
   },
 
-  // ---- Story 8.5: doc drift guards — cheap grep assertions (spec §Tests, "docs assertions") -----
-  'docs: README.md layout block carries the three tiers + the MORNING.md copy wording': () => {
+  // ---- Story 9.7: doc drift guards — the four-column map (supersedes the 8.5 three-tier guards) --
+  'docs: README.md layout block carries the four-column map + tiers': () => {
     const doc = shippedDoc('README.md');
-    assert.match(doc, /read \(morning\)/, 'read tier label');
-    assert.match(doc, /edit \(daytime/, 'edit tier label');
-    assert.match(doc, /machine memory \(never open\)/, 'machine-memory tier label');
-    assert.match(doc, /byte-identical copy of the newest (dated brief|file in `briefs\/`)/, 'MORNING.md copy wording');
-    // out/ patch exception + the state.json/STATE.md disarming line.
-    assert.match(doc, /except `\*\.patch`/, 'out/ patch exception');
-    assert.match(doc, /Unrelated despite the name/, 'state.json/STATE.md disarming line');
+    assert.match(doc, /\*\*Read \(morning\)\*\*/, 'read tier label');
+    assert.match(doc, /\*\*Edit \(daytime/, 'edit tier label');
+    assert.match(doc, /\*\*Machine memory \(never open\)\*\*/, 'machine-memory tier label');
+    assert.match(doc, /\| edit\? \| owner \| safe to delete\? \| committed\? \|/, 'four-column header');
+    assert.match(doc, /`runtime\/` is disposable/, 'runtime/-is-disposable subtlety');
+    assert.match(doc, /`ledger\.jsonl` is Nightwatch's memory/, 'ledger-is-memory subtlety');
   },
 
-  'docs: install.md layout block uses the same three-tier vocabulary': () => {
+  'docs: install.md layout block carries the same four-column map': () => {
     const doc = shippedDoc('docs/install.md');
-    assert.match(doc, /read \(morning\)/);
-    assert.match(doc, /edit \(daytime/);
-    assert.match(doc, /machine memory \(never open\)/);
-    assert.match(doc, /byte-identical copy of the newest dated brief/, 'MORNING.md copy wording');
-    assert.match(doc, /except `\*\.patch`/, 'out/ patch exception');
+    assert.match(doc, /\*\*Read \(morning\)\*\*/);
+    assert.match(doc, /\*\*Edit \(daytime/);
+    assert.match(doc, /\*\*Machine memory \(never open\)\*\*/);
+    assert.match(doc, /\| edit\? \| owner \| safe to delete\? \| committed\? \|/, 'four-column header');
+    assert.match(doc, /`runtime\/` is disposable/, 'runtime/-is-disposable subtlety');
+    assert.match(doc, /`ledger\.jsonl` is Nightwatch's memory/, 'ledger-is-memory subtlety');
   },
 
   // ---- AC (b): the adapter probe reports detect/available + install hint for detected-unavailable
