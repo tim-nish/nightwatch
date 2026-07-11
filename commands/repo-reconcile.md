@@ -17,9 +17,11 @@ before running anything, and call the result `${NW_ROOT}` for the rest of this f
 
 1. If `${CLAUDE_PLUGIN_ROOT}` is set, use it (official plugin install).
 2. Else if `${NIGHTWATCH_ROOT}` is set, use it (local/symlink install — see `docs/install.md`).
-3. Else stop immediately and report: "Nightwatch root not found — set `NIGHTWATCH_ROOT` to the
-   plugin directory (see docs/install.md) or install Nightwatch as a Claude Code plugin." Do
-   not guess a path.
+3. Else if the orchestrator launched you and supplied a Nightwatch root in your prompt, use that
+   (a scheduled `/nightwatch` run resolves the root once and hands it to each member job) — this is
+   the normal overnight path, and neither env var need be set in the subagent's environment.
+4. Else stop and report: "Nightwatch root not found — set `NIGHTWATCH_ROOT` to the plugin directory
+   (see docs/install.md) or install Nightwatch as a Claude Code plugin." Do not guess a path.
 
 ## Deterministic layer
 
@@ -27,7 +29,7 @@ Run the surface inventory (the repo's *claimable surface*):
 ```
 node ${NW_ROOT}/scripts/surface-inventory.js --repo .
 ```
-Read `.nightwatch/out/surface-<date>.json`: CLI subcommands/flags, exported symbols,
+Read `.nightwatch/runtime/out/surface-<date>.json`: CLI subcommands/flags, exported symbols,
 command/skill files, config keys, file-tree shape, README code blocks and flag tokens. If the
 build is broken or the surface is unparsable, that is **finding #1** and it stops deeper checks —
 a broken build outranks all drift.
@@ -52,7 +54,7 @@ a broken build outranks all drift.
 5. Direction of fix, from the authority role of the artifact the claim lives in:
    - `role: derived` (e.g. README follows code) **and the fix is a pure deletion** (stale text
      whose source is gone) → mechanically fixable. Generate a unified-diff **patch file** at
-     `.nightwatch/out/reconcile-<date>.patch`. **The mechanical patch surface is delete-only by
+     `.nightwatch/runtime/out/reconcile-<date>.patch`. **The mechanical patch surface is delete-only by
      design** (spec `docs/specs/reconcile-patch-workflow.md` P3, FR97): patch files are the
      default and only mechanism *for deletion drift*, no other patch-authoring path exists, and
      you never hand-assemble a diff for any other change. If config `patch_branch: true`,
@@ -69,7 +71,7 @@ a broken build outranks all drift.
 
 ## Output
 
-Write `.nightwatch/out/repo-reconcile-<date>.json` using the schema in
+Write `.nightwatch/runtime/out/repo-reconcile-<date>.json` using the schema in
 `${NW_ROOT}/scripts/lib/findings.js` (stable ids via `makeId(job, kind, locus)` where
 `locus` names the claim independent of wording, e.g. `"README.md::flag:--tag"`). Cap the brief
 section at `caps.reconcile` (default 10), ranked by user-facing severity — a documented-but-

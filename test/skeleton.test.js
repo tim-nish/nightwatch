@@ -62,10 +62,13 @@ module.exports = {
     });
     // All four blocks must be exactly equal — single helper, no per-mode conditional (FR2/FR3).
     for (const b of blocks) assert.strictEqual(b, blocks[0], 'resolution block identical across commands');
-    // The chain must be CLAUDE_PLUGIN_ROOT -> NIGHTWATCH_ROOT -> refuse, in that order.
+    // The chain is CLAUDE_PLUGIN_ROOT -> NIGHTWATCH_ROOT -> orchestrator-supplied root -> refuse,
+    // in that order (FR3, extended by FR96 so a member launched with a prompt-supplied root proceeds).
     const b = blocks[0];
     assert.ok(b.indexOf('CLAUDE_PLUGIN_ROOT') < b.indexOf('NIGHTWATCH_ROOT'), 'plugin root preferred first');
-    assert.ok(/stop immediately/.test(b), 'refuses when neither is set');
+    assert.ok(b.indexOf('NIGHTWATCH_ROOT') < b.indexOf('orchestrator launched you'), 'env vars preferred over the supplied root');
+    assert.ok(b.indexOf('orchestrator launched you') < b.indexOf('stop and report'), 'refuse only after every source is exhausted');
+    assert.ok(/Nightwatch root not found/.test(b), 'refuses when no source is available');
   },
 
   'no bypass: commands invoke scripts only through ${NW_ROOT}, never a hardcoded/relative path': () => {
@@ -77,6 +80,33 @@ module.exports = {
         assert.ok(/\$\{NW_ROOT\}\/scripts\//.test(line), `${c}.md resolves script through NW_ROOT: ${line.trim()}`);
         assert.ok(!/\.\.\/scripts\//.test(line), `${c}.md has no relative script path: ${line.trim()}`);
       }
+    }
+  },
+
+  // Story 11.5 / FR96 — the command docs must name the runtime output dir the scripts actually use.
+  // `lib/util.outDir` produces `.nightwatch/runtime/out`; the legacy `.nightwatch/out` (legacyOutDir)
+  // is read as a fallback but never written, so a doc that points a member there sends it to the
+  // wrong place. Grep-guard: no command doc may reference the legacy path.
+  'command docs reference runtime/out, never the legacy .nightwatch/out (FR96)': () => {
+    const { outDir, legacyOutDir } = require('../scripts/lib/util');
+    // Sanity: the paths this guard is built on are what the code produces.
+    assert.ok(outDir('/x').endsWith('/.nightwatch/runtime/out'), 'outDir is runtime/out');
+    assert.ok(legacyOutDir('/x').endsWith('/.nightwatch/out'), 'legacyOutDir is the bare out/');
+    // The legacy dir as a path segment — matches `.nightwatch/out/` but NOT `.nightwatch/runtime/out/`.
+    const legacy = /\.nightwatch\/out\//;
+    for (const c of COMMANDS) {
+      const text = fs.readFileSync(path.join(ROOT, 'commands', `${c}.md`), 'utf8');
+      const bad = text.split('\n').map((l, i) => [i + 1, l]).filter(([, l]) => legacy.test(l));
+      assert.strictEqual(bad.length, 0, `${c}.md references the legacy .nightwatch/out/ path: ${bad.map(([n, l]) => `L${n}: ${l.trim()}`).join(' | ')}`);
+    }
+  },
+
+  // Story 11.5 / FR96 — a member launched by the orchestrator gets its root from the prompt; the
+  // resolution chain must accept that so a healthy overnight run isn't refused for a missing env var.
+  'member command docs accept an orchestrator-supplied script root (FR96)': () => {
+    for (const c of ['repo-reconcile', 'arch-review', 'release-progress']) {
+      const text = fs.readFileSync(path.join(ROOT, 'commands', `${c}.md`), 'utf8');
+      assert.match(text, /orchestrator launched you and supplied a Nightwatch root/, `${c}.md accepts the orchestrator-supplied root`);
     }
   },
 };

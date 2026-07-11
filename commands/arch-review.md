@@ -16,9 +16,11 @@ before running anything, and call the result `${NW_ROOT}` for the rest of this f
 
 1. If `${CLAUDE_PLUGIN_ROOT}` is set, use it (official plugin install).
 2. Else if `${NIGHTWATCH_ROOT}` is set, use it (local/symlink install — see `docs/install.md`).
-3. Else stop immediately and report: "Nightwatch root not found — set `NIGHTWATCH_ROOT` to the
-   plugin directory (see docs/install.md) or install Nightwatch as a Claude Code plugin." Do
-   not guess a path.
+3. Else if the orchestrator launched you and supplied a Nightwatch root in your prompt, use that
+   (a scheduled `/nightwatch` run resolves the root once and hands it to each member job) — this is
+   the normal overnight path, and neither env var need be set in the subagent's environment.
+4. Else stop and report: "Nightwatch root not found — set `NIGHTWATCH_ROOT` to the plugin directory
+   (see docs/install.md) or install Nightwatch as a Claude Code plugin." Do not guess a path.
 
 ## Deterministic layer
 
@@ -45,7 +47,7 @@ To inspect the raw signals directly:
 ```
 node ${NW_ROOT}/scripts/arch-signals.js --repo .
 ```
-Read `.nightwatch/out/arch-signals-<date>.json`. Signal classes:
+Read `.nightwatch/runtime/out/arch-signals-<date>.json`. Signal classes:
 - *Speculation* — interfaces/protocols/ABCs with ≤1 implementer, single-caller indirection,
   config keys read nowhere. (Extractor-dependent; skipped with a `degraded` notice when the
   language has no extractor.)
@@ -83,7 +85,7 @@ deliberately does not do:
 
 ## Output
 
-`${NW_ROOT}/scripts/arch-review.js` writes `.nightwatch/out/arch-review-<date>.json` for you
+`${NW_ROOT}/scripts/arch-review.js` writes `.nightwatch/runtime/out/arch-review-<date>.json` for you
 (schema in `${NW_ROOT}/scripts/lib/findings.js`; `kind: "arch"`, or `"decision"` for
 decision-needed) and
 records each finding in the ledger so recurrence is counted across runs. Every finding is stamped
