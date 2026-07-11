@@ -14,7 +14,7 @@
 // the findings JSON output the brief/ledger consume.
 const path = require('path');
 const yaml = require('js-yaml');
-const { parseArgs, repoRoot, todayISO, outDir, writeJSON, readFileSafe, exists, toFraction, progressPercent } = require('./lib/util');
+const { parseArgs, guardCli, repoRoot, todayISO, outDir, writeJSON, readFileSafe, exists, toFraction, progressPercent } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
 const { releaseChecks } = require('./release-checks');
 const { openTracker, itemId, releaseReadPath } = require('./lib/tracker');
@@ -394,7 +394,7 @@ function readNextActions(store) {
 }
 
 function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = guardCli('release-progress.js', process.argv.slice(2), ['date', 'force']);
   const root = repoRoot(args);
   const date = todayISO(args);
   const res = releaseProgress(root, { date, force: !!args.force });

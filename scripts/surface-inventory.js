@@ -6,7 +6,7 @@
 // Per-ecosystem extractor (Node/TS first) + a universal fallback that works everywhere
 // (file tree + command files + README code blocks + flag tokens). Writes out/surface-<date>.json.
 const path = require('path');
-const { parseArgs, repoRoot, todayISO, walkFiles, readFileSafe, exists, readJSONSafe, topSegment, writeJSON, outDir } = require('./lib/util');
+const { parseArgs, guardCli, repoRoot, todayISO, walkFiles, readFileSafe, exists, readJSONSafe, topSegment, writeJSON, outDir } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
 const { analysisExcludeGlobs } = require('./lib/scope');
 
@@ -145,7 +145,7 @@ function inventory(root) {
 }
 
 function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = guardCli('surface-inventory.js', process.argv.slice(2), ['date']);
   const root = repoRoot(args);
   const date = todayISO(args);
   const inv = inventory(root);

@@ -6,11 +6,11 @@
 // command narrates live as each event happens; this renders the same lines from the record, so a
 // human can re-read them after the fact and so tests can assert live narration and the persisted
 // facts agree. One line per lifecycle event.
-const { parseArgs, repoRoot, todayISO, outReadPath, readJSONSafe } = require('./lib/util');
+const { parseArgs, guardCli, repoRoot, todayISO, outReadPath, readJSONSafe } = require('./lib/util');
 const { narrateRunStatus } = require('./lib/narrate');
 
 function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = guardCli('narrate.js', process.argv.slice(2), ['date']);
   const root = repoRoot(args);
   const date = todayISO(args);
   const rs = readJSONSafe(outReadPath(root, `run-status-${date}.json`)) || { jobs: [] };

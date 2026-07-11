@@ -15,13 +15,13 @@
 // the morning backfill and with manual checkbox edits in any order without double-counting.
 // Writes only inside `.nightwatch/**`; spends no tokens; no network.
 const path = require('path');
-const { parseArgs, repoRoot, nwDir, readFileSafe } = require('./lib/util');
+const { parseArgs, guardCli, repoRoot, nwDir, readFileSafe } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
 const { openTracker } = require('./lib/tracker');
 const { applyReview, listFindings } = require('./lib/review');
 
 function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = guardCli('review-feedback.js', process.argv.slice(2), ['date', 'list', 'id', 'mark']);
   const root = repoRoot(args);
   const briefDate = typeof args.brief === 'string' ? args.brief : undefined;
 

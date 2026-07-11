@@ -10,7 +10,7 @@
 //     notice and every other extractor still contributes.
 const fs = require('fs');
 const path = require('path');
-const { parseArgs, repoRoot, todayISO, nwDir, ensureDir, readJSONSafe, writeJSON } = require('./lib/util');
+const { parseArgs, guardCli, repoRoot, todayISO, nwDir, ensureDir, readJSONSafe, writeJSON } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
 const { analysisExcludeGlobs } = require('./lib/scope');
 const { makeSignal, writeSignals } = require('./lib/signals');
@@ -129,7 +129,7 @@ function extractSignals(root, opts = {}) {
 }
 
 function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = guardCli('extract-signals.js', process.argv.slice(2), ['date', 'window']);
   const root = repoRoot(args);
   const date = todayISO(args);
   const window = args.window ? parseInt(args.window, 10) : undefined;

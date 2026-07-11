@@ -82,6 +82,40 @@ function isGitRepo(root) {
   return r != null && r.trim() === 'true';
 }
 
+/**
+ * CLI usage guard (spec §6 safety model, FR95). Every job CLI calls this at the very top of
+ * `main()`, BEFORE any file write, so an exploratory or malformed invocation can never create
+ * `.nightwatch/` where the caller happens to stand (the finding-0034 breach). It:
+ *   - prints usage and exits 0, writing nothing, on `--help` / `-h` / any unrecognized `--flag`;
+ *   - refuses (stderr + exit 2, no writes) when cwd is not a git checkout and no `--repo` was given;
+ *   - otherwise returns the parsed args unchanged.
+ * `allowed` is the flag names this CLI accepts (without `--`); `repo` is always allowed. Because it
+ * runs only inside `main()` (guarded by `require.main === module`), the `process.exit` calls affect
+ * only real CLI invocations, never a `require()` of the module.
+ * @param {string} name script basename for the usage line @param {string[]} argv `process.argv.slice(2)`
+ * @param {string[]} [allowed] accepted flag names (without leading `--`)
+ * @returns {import('./types').Args}
+ */
+function guardCli(name, argv, allowed = []) {
+  const raw = Array.isArray(argv) ? argv : [];
+  // `repo` and `date` are universal (every CLI resolves the repo root and accepts a run date).
+  const allow = new Set(['repo', 'date', ...allowed]);
+  const flagList = [...allow].map((f) => `[--${f}${f === 'repo' || f === 'date' ? ' <value>' : ''}]`).join(' ');
+  const usage = `usage: ${name} ${flagList}`;
+  let unknown = null;
+  for (const a of raw) {
+    if (a === '-h' || a === '--help') { process.stdout.write(usage + '\n'); process.exit(0); }
+    if (a.startsWith('--')) { const k = a.slice(2).split('=')[0]; if (!allow.has(k)) { unknown = a; break; } }
+  }
+  if (unknown) { process.stderr.write(`unknown option: ${unknown}\n${usage}\n`); process.exit(0); }
+  const args = parseArgs(raw);
+  if (!args.repo && !isGitRepo(process.cwd())) {
+    process.stderr.write(`${name}: refusing to run — cwd is not a git checkout and no --repo was given.\nPass --repo <path> to a git repository.\n`);
+    process.exit(2);
+  }
+  return args;
+}
+
 function commitCount(root) {
   const r = git(root, ['rev-list', '--count', 'HEAD']);
   const n = r == null ? 0 : parseInt(r.trim(), 10);
@@ -164,7 +198,7 @@ function progressPercent(value) {
 }
 
 module.exports = {
-  parseArgs, repoRoot, todayISO, ensureDir, readFileSafe, exists, readJSONSafe,
+  parseArgs, guardCli, repoRoot, todayISO, ensureDir, readFileSafe, exists, readJSONSafe,
   writeJSON, outDir, legacyOutDir, outReadPath, runtimeDir, nwDir, git, isGitRepo, commitCount, globToRegExp, makeIgnore,
   walkFiles, topSegment, toFraction, progressPercent,
 };

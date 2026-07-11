@@ -8,7 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
-const { parseArgs, repoRoot, todayISO, nwDir, outDir, outReadPath, ensureDir, readFileSafe, readJSONSafe, exists, progressPercent, git } = require('./lib/util');
+const { parseArgs, guardCli, repoRoot, todayISO, nwDir, outDir, outReadPath, ensureDir, readFileSafe, readJSONSafe, exists, progressPercent, git } = require('./lib/util');
 const { readAllFindings } = require('./lib/findings');
 const { openTracker, releaseReadPath } = require('./lib/tracker');
 const { classifyOpenFindings, newClassificationRows, floorClassifier, runOrdinal, gcPatches, lifecycleCounts } = require('./lib/lifecycle');
@@ -673,7 +673,7 @@ function collectOrStub(root, date, opts = {}) {
 }
 
 function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = guardCli('collect-brief.js', process.argv.slice(2), ['date', 'force']);
   const root = repoRoot(args);
   const date = todayISO(args);
   // Always emit at least a stub — a failed assembly must not exit with no brief written.

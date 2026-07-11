@@ -6,13 +6,13 @@
 // `[-]`/`[~]` dismissed) and backfills them into .nightwatch/ledger.jsonl through the tracking
 // store's recordFeedback(), the sole sanctioned ledger writer. The demotion rule that
 // collect-brief.js computes later then sees these marks. Deterministic; writes only .nightwatch/**.
-const { parseArgs, repoRoot } = require('./lib/util');
+const { parseArgs, guardCli, repoRoot } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
 const { openTracker } = require('./lib/tracker');
 const { backfillFeedback } = require('./lib/feedback');
 
 function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = guardCli('backfill-feedback.js', process.argv.slice(2), ['date']);
   const root = repoRoot(args);
   const { config } = loadConfig(root);
   const store = openTracker(root, config);
