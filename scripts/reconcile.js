@@ -16,6 +16,7 @@ const { loadConfig } = require('./lib/config');
 const { analysisExcludeGlobs } = require('./lib/scope');
 const { inventory } = require('./surface-inventory');
 const { makeFinding, recurrenceCounts, readLedger, appendLedger, SCHEMA_VERSION } = require('./lib/findings');
+const { patchFileFor } = require('./lib/lifecycle');
 
 /**
  * Find the declared authority entry whose `artifact` glob matches a claim's source path.
@@ -229,12 +230,24 @@ function adversarialPass(driftFindings, refute) {
  * against double-append on a same-date re-run so a re-run never inflates counts. Mirrors the
  * ledger recording arch-review performs. `findings` are the ones that reached the brief.
  */
-function recordLedger(root, date, findings, refutedCount) {
+function recordLedger(root, date, findings, refutedCount, force = false) {
+  // Same-date guard, unless forced (spec finding-lifecycle P6): a forced re-run's run row is
+  // appended with `forced: true` rather than swallowed, so the ledger never misses a run.
   const already = readLedger(root).some((r) => r.type === 'run' && r.job === 'repo-reconcile' && r.date === date);
-  if (already) return;
+  if (already && !force) return;
+  /** @type {any} */
+  const runRow = { type: 'run', date, job: 'repo-reconcile', findings: findings.length, refuted: refutedCount };
+  if (force) runRow.forced = true;
   /** @type {any[]} */
-  const rows = [{ type: 'run', date, job: 'repo-reconcile', findings: findings.length, refuted: refutedCount }];
-  for (const f of findings) rows.push({ type: 'finding', date, job: 'repo-reconcile', id: f.id, kind: f.kind, severity: f.severity });
+  const rows = [runRow];
+  // Persist each finding's cited evidence (and cited text) so the deterministic re-verification
+  // floor (spec P2) can re-check a carried-forward finding from the ledger alone.
+  for (const f of findings) {
+    const row = { type: 'finding', date, job: 'repo-reconcile', id: f.id, kind: f.kind, severity: f.severity };
+    if (Array.isArray(f.evidence) && f.evidence.length) row.evidence = f.evidence.map((e) => (e && e.line != null ? { path: e.path, line: e.line } : { path: e.path }));
+    if (typeof f.text === 'string' && f.text) row.text = f.text;
+    rows.push(row);
+  }
   appendLedger(root, rows);
 }
 
@@ -245,8 +258,8 @@ function recordLedger(root, date, findings, refutedCount) {
  * then challenges each `drifted` verdict so only survivors reach the brief. Findings that reach the
  * brief are stamped `verified: true` and recorded in the ledger for recurrence (FR7).
  * @param {string} root
- * @param {{date?: string, refute?: ((finding:any)=>(boolean|{refuted?:boolean, reason?:string}))}} [opts]
- * @returns {{ degraded: string[], findings: any[], claims: any[], unverifiable: any[], stopped: boolean, patch: string|null, patchPath: string|null, patchBranch: string|null, human_decisions: string[], refuted: Array<{id:string, title:string, reason:string}> }}
+ * @param {{date?: string, force?: boolean, refute?: ((finding:any)=>(boolean|{refuted?:boolean, reason?:string}))}} [opts]
+ * @returns {{ degraded: string[], findings: any[], claims: any[], unverifiable: any[], stopped: boolean, patch: string|null, patchPath: string|null, patches: {id:string, path:string}[], patchBranch: string|null, human_decisions: string[], refuted: Array<{id:string, title:string, reason:string}> }}
  */
 function reconcile(root, opts = {}) {
   const date = opts.date || todayISO();
@@ -266,8 +279,8 @@ function reconcile(root, opts = {}) {
       title: b.reason, locus: 'surface:blocking', evidence: b.evidence || [], extra: undefined });
     f.recurrence = recurrenceCounts(root).get(f.id) || 0;
     findings.push(f);
-    recordLedger(root, date, findings, 0);
-    return { degraded, findings, claims, unverifiable, stopped: true, patch: null, patchPath: null, patchBranch: null, human_decisions: findings.map((x) => x.id), refuted: [] };
+    recordLedger(root, date, findings, 0, opts.force === true);
+    return { degraded, findings, claims, unverifiable, stopped: true, patch: null, patchPath: null, patches: [], patchBranch: null, human_decisions: findings.map((x) => x.id), refuted: [] };
   }
 
   // No declared authority → detection-only mode: conflicts still reported, but the setup finding
@@ -303,7 +316,6 @@ function reconcile(root, opts = {}) {
   //   role: derived       → mechanically fixable → action `patch-available` + a patch line
   //   role: authoritative → a bug or unrecorded decision → `human-decision`, NEVER a patch
   //   undeclared artifact → `human-decision`, direction omitted (3.2 behavior, preserved)
-  const patchFile = `.nightwatch/runtime/out/reconcile-${date}.patch`;
   const pendingPatch = new Map(); // finding.id -> { path, line } — a delete to draft IF it survives
   const drift = [];
   for (const c of claims) {
@@ -319,7 +331,7 @@ function reconcile(root, opts = {}) {
         // itself is the next line. Flag claims already point at the exact documented line.
         const delLine = c.kind === 'command' ? c.source.line + 1 : c.source.line;
         patchLoc = { path: c.source.path, line: delLine };
-        extra = { direction: c.source.path, patch_file: patchFile };
+        extra = { direction: c.source.path }; // patch_file is per-finding — set once the id is known
       }
       // Carry the drifted claim text so the deterministic re-verification floor (spec
       // finding-lifecycle P2) can, on a later run, check whether it is still present at the cited
@@ -327,7 +339,12 @@ function reconcile(root, opts = {}) {
       if (c.text) extra = Object.assign({ text: c.text }, extra);
       const f = makeFinding('repo-reconcile', { kind: 'drift', severity, action, verified: false,
         title: c.title, locus: c.locus, evidence: [c.source], extra });
-      if (patchLoc) pendingPatch.set(f.id, patchLoc);
+      if (patchLoc) {
+        pendingPatch.set(f.id, patchLoc);
+        // Name the patch per finding (spec finding-lifecycle P5) so it survives a same-date rewrite
+        // while the finding is open and is GC-addressable by id once it closes.
+        f.patch_file = patchFileFor(date, f.id);
+      }
       drift.push(f);
     } else if (c.verdict === 'unverifiable-statically') {
       unverifiable.push({ kind: c.kind, text: c.text, source: c.source, reason: 'needs a live run / deeper analysis' });
@@ -377,20 +394,37 @@ function reconcile(root, opts = {}) {
     setupFindings.sort((a, b) => b.severity - a.severity || a.id.localeCompare(b.id));
   }
 
-  // Draft the patch (derived artifacts only). NEVER touches a repo file in place — the patch is
-  // written under .nightwatch/out and is the sole fix mechanism (FR20, normative safety rule).
+  // Draft the patches (derived artifacts only). NEVER touches a repo file in place — a patch is
+  // written under runtime/out and is the sole fix mechanism (FR20, normative safety rule). Two
+  // artifacts are produced (spec finding-lifecycle P5):
+  //   - one patch file PER FINDING, `reconcile-<date>-<id>.patch`, so it survives a same-date
+  //     rewrite while its finding is open and is GC-addressable by id once the finding closes; this
+  //     is what each finding's `patch_file` points the brief at;
+  //   - a combined `reconcile-<date>.patch` (deletes coalesced per file) for holistic application
+  //     and the opt-in patch branch.
   let patch = '';
   for (const p of [...patchDeletes.keys()].sort()) {
     const text = readFileSafe(path.join(root, p)) || '';
     patch += unifiedDiffDelete(p, text, [...patchDeletes.get(p)]);
   }
+  const patches = [];
   let patchPath = null;
   let patchBranch = null;
   if (patch) {
+    ensureDir(outDir(root));
+    // Per-finding patch files (one single-line delete each), named by finding id.
+    for (const f of verifiedDrift) {
+      const loc = pendingPatch.get(f.id);
+      if (!loc) continue;
+      const src = readFileSafe(path.join(root, loc.path)) || '';
+      const perText = unifiedDiffDelete(loc.path, src, [loc.line]);
+      if (!perText) continue;
+      fs.writeFileSync(path.join(outDir(root), `reconcile-${date}-${f.id}.patch`), perText);
+      patches.push({ id: f.id, path: patchFileFor(date, f.id) });
+    }
     patchPath = path.join(outDir(root), `reconcile-${date}.patch`);
-    ensureDir(path.dirname(patchPath));
     fs.writeFileSync(patchPath, patch);
-    // Opt-in only (default false): additionally land the patch on nightwatch/reconcile/<date>,
+    // Opt-in only (default false): additionally land the combined patch on nightwatch/reconcile/<date>,
     // built in a throwaway worktree so the user's branch/working tree stay byte-identical (FR21).
     if (config.patch_branch === true) {
       const branch = `nightwatch/reconcile/${date}`;
@@ -409,19 +443,19 @@ function reconcile(root, opts = {}) {
   // run's rows are appended, then record the brief findings.
   const recur = recurrenceCounts(root);
   for (const f of ordered) f.recurrence = recur.get(f.id) || 0;
-  recordLedger(root, date, ordered, refuted.length);
+  recordLedger(root, date, ordered, refuted.length, opts.force === true);
 
   findings.push(...ordered);
   const human_decisions = ordered.filter((f) => f.action === 'human-decision').map((f) => f.id);
 
-  return { degraded, findings, claims, unverifiable, stopped: false, patch: patch || null, patchPath, patchBranch, human_decisions, refuted };
+  return { degraded, findings, claims, unverifiable, stopped: false, patch: patch || null, patchPath, patches, patchBranch, human_decisions, refuted };
 }
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const root = repoRoot(args);
   const date = todayISO(args);
-  const res = reconcile(root, { date });
+  const res = reconcile(root, { date, force: !!args.force });
   const patch_path = res.patchPath ? `.nightwatch/runtime/out/reconcile-${date}.patch` : null;
   const doc = { schema: SCHEMA_VERSION, job: 'repo-reconcile', date, degraded: res.degraded, findings: res.findings,
     human_decisions: res.human_decisions, patch_path, patch_branch: res.patchBranch, claims: res.claims, unverifiable: res.unverifiable, refuted: res.refuted, stopped: res.stopped };

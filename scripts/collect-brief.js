@@ -11,7 +11,7 @@ const yaml = require('js-yaml');
 const { parseArgs, repoRoot, todayISO, nwDir, outDir, ensureDir, readFileSafe, readJSONSafe, exists, progressPercent } = require('./lib/util');
 const { readAllFindings } = require('./lib/findings');
 const { openTracker, releaseReadPath } = require('./lib/tracker');
-const { classifyOpenFindings, newClassificationRows, floorClassifier } = require('./lib/lifecycle');
+const { classifyOpenFindings, newClassificationRows, floorClassifier, runOrdinal, gcPatches } = require('./lib/lifecycle');
 const { loadConfig } = require('./lib/config');
 const { excludedTopDirs, unclassifiedTopDirs } = require('./lib/scope');
 
@@ -243,6 +243,22 @@ function collect(root, date, { force = false } = {}) {
   const docs = readAllFindings(root, date, MEMBER_JOBS);
   const runStatus = readJSONSafe(path.join(outDir(root), `run-status-${date}.json`)) || { jobs: [] };
 
+  // ---- Finding lifecycle (spec finding-lifecycle P1/P2/P5): classify the carried-forward open set
+  // and identify closed findings whose staged patches to garbage-collect. Computed here (pure reads)
+  // so the Machine-notes GC line can render; the actual ledger writes + patch deletion happen in the
+  // guarded append block below, once, keyed by run-ordinal so a forced re-run traces distinctly. ----
+  const ledgerBefore = store.readLedger();
+  const openBefore = store.openFindings(); // snapshot BEFORE tonight's finding rows are appended
+  const reobserved = new Set();
+  for (const doc of docs) for (const f of doc.findings || []) reobserved.add(f.id);
+  const judged = collectJudgmentVerdicts(ledgerBefore, date);
+  const lifecycleResults = classifyOpenFindings({ open: openBefore, reobserved, date, classifier: floorClassifier(root, { judged }) });
+  // A finding is closed (its patch may be collected) when it is resolved this run or already
+  // dismissed via feedback. Its patch files (any date) are GC'd with one Machine-notes line (P5).
+  const closedIds = new Set(lifecycleResults.filter((r) => r.classification === 'resolved').map((r) => r.id));
+  for (const r of ledgerBefore) if (r && r.type === 'feedback' && String(r.verdict) === 'dismissed' && r.id) closedIds.add(r.id);
+  const gcCandidates = gcPatches(root, closedIds, { remove: false }); // read-only preview for the note
+
   // Gather eligible findings tagged with source job + class.
   const all = [];
   const degradedNotices = [];
@@ -320,6 +336,11 @@ function collect(root, date, { force = false } = {}) {
   for (const d of driftDirs) {
     notes.push(`- new top-level directory \`${d}/\` is unclassified; run \`/nightwatch init --update\` or add it to \`.nightwatch/config.yaml\`.`);
   }
+  // Collected staged patches (spec finding-lifecycle P5): one line naming the patch files GC'd
+  // because their finding is resolved or dismissed. Byte-deterministic (gcPatches returns sorted).
+  if (gcCandidates.length) {
+    notes.push(`- Collected ${gcCandidates.length} stale patch${gcCandidates.length === 1 ? '' : 'es'} (finding resolved/dismissed): ${gcCandidates.map((p) => `\`${p}\``).join(', ')}.`);
+  }
   // Scope statement (FR42): name the excluded top-level trees so a wrong scope is visible, never
   // silent. `ignore` (never look) and `dev_tooling` (not the product) are unioned.
   const excluded = excludedTopDirs(root, config);
@@ -345,30 +366,32 @@ function collect(root, date, { force = false } = {}) {
   // recurrence/demotion counts. Per-job lines carry date/job/tokens/findings count/degraded flags;
   // finding rows go through recordFindings so they dedupe by id like every other ledger writer. ----
   const already = store.readLedger().some((r) => r.type === 'run' && r.job === 'collect-brief' && r.date === date);
-  // The open set carried INTO tonight, snapshotted before tonight's finding rows are appended (spec
-  // finding-lifecycle P1). Everything here must be classified exactly once before the run ends.
-  const openBefore = store.openFindings();
   if (!already || force) {
+    // Run-ordinal for this date (spec finding-lifecycle P6): 0 for the first run, ≥1 for a forced
+    // same-date re-run. A forced re-run stamps `forced:true` + the ordinal on its run rows (never
+    // swallowed by the same-date guard) and writes its classification rows once per ordinal; an
+    // unforced same-night re-run is blocked by the guard above and appends nothing.
+    const ordinal = runOrdinal(store.readLedger(), date);
+    const runMeta = force ? { forced: true, run_ordinal: ordinal } : (ordinal ? { run_ordinal: ordinal } : {});
     for (const doc of docs) {
       const js = (runStatus.jobs || []).find((j) => j.job === doc.job) || {};
-      store.recordRun({ date, job: doc.job, findings: (doc.findings || []).length, degraded: (doc.degraded || []).length, tokens: js.tokens || null });
+      store.recordRun({ date, job: doc.job, findings: (doc.findings || []).length, degraded: (doc.degraded || []).length, tokens: js.tokens || null, ...runMeta });
       store.recordFindings(doc.findings || [], { date, job: doc.job });
     }
-    store.recordRun({ date, job: 'collect-brief', shown: shown.length, total: all.length, cap });
+    store.recordRun({ date, job: 'collect-brief', shown: shown.length, total: all.length, cap, ...runMeta });
     // Per-run classification of the carried-forward open set (spec P1/P2): an id tonight's docs
     // re-surfaced is `re-observed` (its finding row already dedupes); every other open finding runs
     // through the deterministic floor (free, zero tokens) — cited path/text gone → `resolved`,
     // still present → `still-open (deterministic)`, unresolvable → escalated. An escalated finding
-    // is `not-re-examined` unless the owning job recorded a budgeted judgment verdict for it this
-    // run (folded in via `judged`). Rows are keyed (type,id,date) so a forced re-run never
-    // duplicates them, and no historical row is rewritten. So no open finding silently vanishes.
-    const reobserved = new Set();
-    for (const doc of docs) for (const f of doc.findings || []) reobserved.add(f.id);
-    const judged = collectJudgmentVerdicts(store.readLedger(), date);
-    const results = classifyOpenFindings({ open: openBefore, reobserved, date, classifier: floorClassifier(root, { judged }) });
-    for (const row of newClassificationRows(results, store.readLedger())) {
+    // is `not-re-examined` unless the owning job recorded a budgeted judgment verdict this run.
+    // Rows are keyed (type,id,date,run-ordinal) so an unforced re-run never duplicates them and a
+    // forced re-run traces distinctly; no historical row is rewritten. So nothing silently vanishes.
+    for (const row of newClassificationRows(lifecycleResults, store.readLedger(), ordinal)) {
       if (row.type === 'resolution') store.recordResolution(row); else store.recordRecheck(row);
     }
+    // Garbage-collect the staged patches of resolved/dismissed findings (P5) — the same set the
+    // Machine-notes line named above. Deleting is idempotent; on a later run the preview finds none.
+    gcPatches(root, closedIds, { remove: true });
   }
 
   return { total: all.length, shown: shown.length, overflow: overflow.length, demotions };

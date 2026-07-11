@@ -4,10 +4,11 @@
 // into every run and classified exactly once: re-observed / resolved / still-open / not-re-examined.
 // Byte-deterministic; no historical ledger row is rewritten (a forced re-run adds no duplicates).
 const assert = require('assert');
-const { tmpRepo, write, gitInit, commit } = require('./helpers');
+const { tmpRepo, write, readFile, gitInit, commit } = require('./helpers');
 const {
   openFindings, classifyOpenFindings, newClassificationRows, lifecycleCounts,
   deterministicFloor, floorClassifier, carveRecheckBudget, planRecheck,
+  runOrdinal, gcPatches,
 } = require('../scripts/lib/lifecycle');
 const { openTracker } = require('../scripts/lib/tracker');
 const { collect } = require('../scripts/collect-brief');
@@ -184,7 +185,7 @@ module.exports = {
     assert.deepStrictEqual(openTracker(r).openFindings().map((o) => o.id), [], 'the finding left the open set');
   },
 
-  'lifecycle: a carried-forward finding not re-observed gets one recheck skipped row; re-run adds none': () => {
+  'lifecycle: a carried-forward finding not re-observed gets one recheck skipped row; an unforced re-run adds none': () => {
     const r = tmpRepo();
     gitInit(r); write(r, 'src/a.js', '1\n'); commit(r, 'repo');
     const store = openTracker(r, { tracking: { backend: 'markdown' } });
@@ -196,8 +197,72 @@ module.exports = {
     assert.strictEqual(after[0].method, 'skipped');
     assert.strictEqual(after[0].date, '2026-07-10');
 
-    collect(r, '2026-07-10', { force: true }); // forced re-run must not duplicate the classification row
+    collect(r, '2026-07-10'); // unforced same-night re-run is a no-op (guard blocks the append)
     const dup = openTracker(r).readLedger().filter((x) => x.type === 'recheck' && x.id === 'RC-old');
-    assert.strictEqual(dup.length, 1, 'forced re-run appends no duplicate classification row');
+    assert.strictEqual(dup.length, 1, 'unforced re-run appends nothing');
+  },
+
+  // ---- P5/P6: run-ordinal, forced-run ledger traces, patch preservation & GC ---------------
+  'p6: run-ordinal counts completed collect-brief runs for a date': () => {
+    const rows = [
+      { type: 'run', job: 'collect-brief', date: '2026-07-10' },
+      { type: 'run', job: 'repo-reconcile', date: '2026-07-10' },
+      { type: 'run', job: 'collect-brief', date: '2026-07-11' },
+    ];
+    assert.strictEqual(runOrdinal(rows, '2026-07-10'), 1);
+    assert.strictEqual(runOrdinal(rows, '2026-07-09'), 0);
+  },
+
+  'p6: newClassificationRows keys on run-ordinal — a forced re-run writes a distinct row': () => {
+    const results = classifyOpenFindings({ open: openFindings([fRow('RC-a')]), reobserved: [], date: '2026-07-10' });
+    const first = newClassificationRows(results, [], 0);
+    assert.strictEqual(first.length, 1);
+    assert.strictEqual(first[0].run_ordinal, undefined, 'ordinal 0 stays unstamped (byte-identical to 9.1)');
+    const forced = newClassificationRows(results, first, 1);
+    assert.strictEqual(forced.length, 1, 'a forced re-run (ordinal 1) writes a distinct row');
+    assert.strictEqual(forced[0].run_ordinal, 1);
+    assert.strictEqual(newClassificationRows(results, [...first, ...forced], 1).length, 0, 'the same ordinal never duplicates');
+  },
+
+  'p6: a forced re-run appends forced:true run rows and a distinct classification row': () => {
+    const r = tmpRepo();
+    gitInit(r); write(r, 'src/a.js', '1\n'); commit(r, 'repo');
+    openTracker(r, { tracking: { backend: 'markdown' } })
+      .recordFindings([{ id: 'RC-old', kind: 'drift', severity: 2 }], { date: '2026-07-09', job: 'repo-reconcile' });
+    collect(r, '2026-07-10');
+    collect(r, '2026-07-10', { force: true });
+    const rows = openTracker(r).readLedger();
+    const cbRuns = rows.filter((x) => x.type === 'run' && x.job === 'collect-brief' && x.date === '2026-07-10');
+    assert.strictEqual(cbRuns.length, 2, 'two collect-brief run rows (first + forced)');
+    assert.ok(cbRuns.some((x) => x.forced === true && x.run_ordinal === 1), 'forced re-run row stamped forced:true, ordinal 1');
+    const rechecks = rows.filter((x) => x.type === 'recheck' && x.id === 'RC-old');
+    assert.strictEqual(rechecks.length, 2, 'one recheck per (id,date,ordinal): ordinals 0 and 1');
+  },
+
+  'p5: gcPatches removes only the closed patch files, preserving open ones (sorted)': () => {
+    const r = tmpRepo();
+    write(r, '.nightwatch/runtime/out/reconcile-2026-07-10-RC-open.patch', 'x');
+    write(r, '.nightwatch/runtime/out/reconcile-2026-07-10-RC-done.patch', 'y');
+    write(r, '.nightwatch/runtime/out/reconcile-2026-07-09-RC-done.patch', 'z'); // older date, same closed id
+    const removed = gcPatches(r, new Set(['RC-done']));
+    assert.deepStrictEqual(removed, [
+      '.nightwatch/runtime/out/reconcile-2026-07-09-RC-done.patch',
+      '.nightwatch/runtime/out/reconcile-2026-07-10-RC-done.patch',
+    ], 'both dates of the closed finding removed, sorted');
+    assert.ok(readFile(r, '.nightwatch/runtime/out/reconcile-2026-07-10-RC-open.patch') != null, 'the open finding patch is preserved');
+  },
+
+  'p5 e2e: collect-brief GCs a resolved finding\'s patch and names it in Machine notes': () => {
+    const r = tmpRepo();
+    gitInit(r); write(r, 'keep.js', '1\n'); commit(r, 'repo');
+    const store = openTracker(r, { tracking: { backend: 'markdown' } });
+    // An open drift finding citing a now-missing path (→ deterministic resolved this run), with a
+    // staged per-finding patch on disk.
+    store.recordFindings([{ id: 'RC-gone', kind: 'drift', severity: 2, evidence: [{ path: 'deleted.md', line: 1 }], text: 'old' }], { date: '2026-07-09', job: 'repo-reconcile' });
+    write(r, '.nightwatch/runtime/out/reconcile-2026-07-09-RC-gone.patch', 'stale patch');
+    collect(r, '2026-07-10');
+    assert.strictEqual(readFile(r, '.nightwatch/runtime/out/reconcile-2026-07-09-RC-gone.patch'), null, 'the resolved finding patch was collected');
+    const brief = readFile(r, '.nightwatch/MORNING.md');
+    assert.match(brief, /Collected 1 stale patch \(finding resolved\/dismissed\): `\.nightwatch\/runtime\/out\/reconcile-2026-07-09-RC-gone\.patch`/, 'one Machine-notes GC line');
   },
 };

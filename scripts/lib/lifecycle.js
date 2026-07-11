@@ -11,8 +11,9 @@
 // arithmetic (P3), which plug into `classifyOpenFindings`'s `classifier`. Judgment itself spends
 // tokens and is the owning job/subagent's work; the scripts here own the free floor and the budget
 // accounting, deferring anything inconclusive to `escalate` — never a silent close.
+const fs = require('fs');
 const path = require('path');
-const { readFileSafe, exists } = require('./util');
+const { readFileSafe, exists, outDir } = require('./util');
 
 /** The four per-run states every open finding is classified into, exactly once (spec P1 table). */
 const CLASSIFICATIONS = ['re-observed', 'resolved', 'still-open', 'not-re-examined'];
@@ -243,21 +244,76 @@ function planRecheck(escalated, { reserve, costPer }) {
  * @param {any[]} existingRows
  * @returns {object[]}
  */
-function newClassificationRows(results, existingRows) {
+function newClassificationRows(results, existingRows, ordinal = 0) {
   const have = new Set();
-  const keyOf = (r) => `${r.type}|${r.id}|${r.date || ''}`;
+  const keyOf = (r) => `${r.type}|${r.id}|${r.date || ''}|${r.run_ordinal || 0}`;
   for (const r of existingRows || []) {
     if (r && (r.type === 'resolution' || r.type === 'recheck') && r.id) have.add(keyOf(r));
   }
   const rows = [];
   for (const res of results || []) {
     if (!res || !res.row) continue;
-    const key = keyOf(res.row);
+    // Stamp the run-ordinal only when > 0 so a first (unforced) run's rows stay byte-identical to
+    // the 9.1 format; a forced re-run's rows carry their ordinal and so are a distinct exactly-once
+    // unit (spec finding-lifecycle P6: exactly once per (id, date, run-ordinal)).
+    const row = ordinal ? { ...res.row, run_ordinal: ordinal } : res.row;
+    const key = keyOf(row);
     if (have.has(key)) continue;
     have.add(key);
-    rows.push(res.row);
+    rows.push(row);
   }
   return rows;
+}
+
+// ---- P5/P6: patch preservation + forced-run ordinal ---------------------------------------
+
+// A per-finding patch file name (spec finding-lifecycle P5): reconcile-<date>-<id>.patch. Named by
+// finding id so it survives a same-date rewrite while its finding is open, and is GC-addressable by
+// id once the finding closes.
+const PATCH_NAME_RE = /^reconcile-\d{4}-\d{2}-\d{2}-(.+)\.patch$/;
+
+/** Repo-relative per-finding patch path under the disposable runtime/out (spec P5). */
+function patchFileFor(date, id) { return `.nightwatch/runtime/out/reconcile-${date}-${id}.patch`; }
+
+/**
+ * The run-ordinal for `date` (spec finding-lifecycle P6): how many collect-brief runs already
+ * completed on that date. The first run of a night is ordinal 0; a forced same-date re-run is 1,
+ * and so on. Run rows and classification rows are stamped with it so a forced re-run leaves its own
+ * audit trace instead of being swallowed by the same-date guard — while unforced re-runs still
+ * no-op (their guard blocks the whole append).
+ * @param {any[]} rows @param {string} date @returns {number}
+ */
+function runOrdinal(rows, date) {
+  let n = 0;
+  for (const r of rows || []) if (r && r.type === 'run' && r.job === 'collect-brief' && r.date === date) n++;
+  return n;
+}
+
+/**
+ * Garbage-collect the staged patches of findings that are resolved or dismissed (spec P5): a patch
+ * survives only while its finding is open, so once closed its per-finding patch file(s) — of any
+ * date — are removed. Returns the sorted repo-relative paths removed, for the single Machine-notes
+ * line the brief renders. Deterministic; deleting an absent file is a no-op. `remove:false` performs
+ * the same match read-only (used to render the note before the guarded delete).
+ * @param {string} root @param {Iterable<string>} closedIds
+ * @param {{remove?:boolean}} [opts]
+ * @returns {string[]}
+ */
+function gcPatches(root, closedIds, opts = {}) {
+  const remove = opts.remove !== false;
+  const ids = closedIds instanceof Set ? closedIds : new Set(closedIds || []);
+  if (!ids.size) return [];
+  const dir = outDir(root);
+  let names;
+  try { names = fs.readdirSync(dir); } catch { return []; }
+  const removed = [];
+  for (const name of names) {
+    const m = name.match(PATCH_NAME_RE);
+    if (!m || !ids.has(m[1])) continue;
+    if (remove) { try { fs.unlinkSync(path.join(dir, name)); } catch { /* already gone */ } }
+    removed.push(`.nightwatch/runtime/out/${name}`);
+  }
+  return removed.sort();
 }
 
 /**
@@ -279,4 +335,5 @@ module.exports = {
   CLASSIFICATIONS, RECHECK_METHODS,
   openFindings, classifyOpenFindings, newClassificationRows, defaultClassifier, lifecycleCounts,
   deterministicFloor, floorClassifier, carveRecheckBudget, planRecheck,
+  patchFileFor, runOrdinal, gcPatches,
 };
