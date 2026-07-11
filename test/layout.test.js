@@ -10,9 +10,12 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { tmpRepo, write, readFile } = require('./helpers');
+const { tmpRepo, write, readFile, gitInit, commit, runScript } = require('./helpers');
 const { loadConfig, DEFAULTS } = require('../scripts/lib/config');
 const { openTracker, releaseReadPath, releaseWritePath } = require('../scripts/lib/tracker');
+const { statePath, legacyStatePath } = require('../scripts/lib/schedule');
+const { outDir, legacyOutDir } = require('../scripts/lib/util');
+const { ensureGitignore } = require('../scripts/lib/init');
 
 const STATE = (phase) => `# state\n\`\`\`yaml\nphase: ${phase}\n\`\`\`\n`;
 
@@ -94,6 +97,37 @@ module.exports = {
     t.flush();
     const rootStray = fs.readdirSync(r).filter((n) => n.startsWith('RELEASE.md.tmp-'));
     assert.deepStrictEqual(rootStray, [], 'no temp file leaked to the repo root');
+  },
+
+  // ---- runtime/ boundary (Story 9.4, spec runtime-layout P1) --------------------------------
+  'runtime: cursors and per-run output resolve under .nightwatch/runtime/ (legacy paths recorded)': () => {
+    const r = tmpRepo();
+    assert.strictEqual(statePath(r), path.join(r, '.nightwatch', 'runtime', 'cursors.json'), 'cursors under runtime/');
+    assert.strictEqual(legacyStatePath(r), path.join(r, '.nightwatch', 'state.json'), 'legacy state.json path retained');
+    assert.strictEqual(outDir(r), path.join(r, '.nightwatch', 'runtime', 'out'), 'per-run output under runtime/');
+    assert.strictEqual(legacyOutDir(r), path.join(r, '.nightwatch', 'out'), 'legacy out/ path retained');
+  },
+
+  'runtime: nested .gitignore ignores runtime/ (legacy out/ line tolerated)': () => {
+    const r = tmpRepo();
+    // A pre-runtime install already has a bare `out/` line: it is left in place, `runtime/` added.
+    write(r, '.nightwatch/.gitignore', 'out/\n');
+    const res = ensureGitignore(r);
+    assert.strictEqual(res.changed, true, 'runtime/ appended');
+    const gi = readFile(r, '.nightwatch/.gitignore');
+    assert.ok(/^runtime\/$/m.test(gi), 'runtime/ ignored');
+    assert.ok(/^out\/$/m.test(gi), 'legacy out/ line left in place');
+  },
+
+  'runtime: a real run writes cursors + out under runtime/; briefs/ledger stay trackable': () => {
+    const r = tmpRepo();
+    gitInit(r); write(r, 'src/app.js', 'x\n'); commit(r, 'init');
+    runScript('orchestrate.js', r, { date: '2026-07-10' });
+    // Cadence cursors land under runtime/, not at the legacy root of .nightwatch/.
+    assert.ok(readFile(r, '.nightwatch/runtime/cursors.json') != null, 'cursors under runtime/');
+    assert.strictEqual(readFile(r, '.nightwatch/state.json'), null, 'nothing at the legacy state.json path');
+    assert.ok(readFile(r, `.nightwatch/runtime/out/run-status-2026-07-10.json`) != null, 'per-run output under runtime/out/');
+    assert.strictEqual(fs.existsSync(path.join(r, '.nightwatch', 'out')), false, 'no legacy .nightwatch/out/');
   },
 
   // ---- layout invariant: fresh install writes zero root Nightwatch files --------------------

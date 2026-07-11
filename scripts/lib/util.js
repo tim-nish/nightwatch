@@ -43,9 +43,16 @@ function readJSONSafe(p) { const t = readFileSafe(p); if (t == null) return null
 
 function writeJSON(p, obj) { ensureDir(path.dirname(p)); fs.writeFileSync(p, JSON.stringify(obj, null, 2) + '\n'); }
 
-/** Nightwatch output directory (transient per-run artifacts). */
-function outDir(root) { return path.join(root, '.nightwatch', 'out'); }
 function nwDir(root) { return path.join(root, '.nightwatch'); }
+// The disposable machine-state boundary (spec runtime-layout P1): everything under
+// `.nightwatch/runtime/` is machine-owned, gitignored as a unit, and safe to delete. Cadence
+// cursors and per-run output live here; committed memory (briefs, ledger) and human declarations
+// (STATE.md, config.yaml, RELEASE.md) stay OUTSIDE it.
+function runtimeDir(root) { return path.join(nwDir(root), 'runtime'); }
+/** Nightwatch per-run output directory (transient artifacts), now under the disposable `runtime/`. */
+function outDir(root) { return path.join(runtimeDir(root), 'out'); }
+/** Legacy per-run output location, read as a fallback until `init --update` migrates it (Story 9.5). */
+function legacyOutDir(root) { return path.join(nwDir(root), 'out'); }
 
 /** Run git in the repo; returns stdout string, or null on failure. */
 function git(root, gitArgs, opts) {
@@ -144,6 +151,6 @@ function progressPercent(value) {
 
 module.exports = {
   parseArgs, repoRoot, todayISO, ensureDir, readFileSafe, exists, readJSONSafe,
-  writeJSON, outDir, nwDir, git, isGitRepo, commitCount, globToRegExp, makeIgnore,
+  writeJSON, outDir, legacyOutDir, runtimeDir, nwDir, git, isGitRepo, commitCount, globToRegExp, makeIgnore,
   walkFiles, topSegment, toFraction, progressPercent,
 };

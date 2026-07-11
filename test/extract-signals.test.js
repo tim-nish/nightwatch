@@ -91,7 +91,7 @@ module.exports = {
     const res = extractSignals(r, { adapters: [fakeAdapter()], config: { ignore: [] } });
     const { writeSignals } = require('../scripts/lib/signals');
     writeSignals(r, '2000-01-01', res);
-    const doc = readJSON(r, '.nightwatch/out/signals-2000-01-01.json');
+    const doc = readJSON(r, '.nightwatch/runtime/out/signals-2000-01-01.json');
     assert.strictEqual(doc.schema, 1);
     assert.ok(doc.sources.some((s) => s.extractor === 'universal-git'));
     assert.ok(doc.signals.length >= 2);

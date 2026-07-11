@@ -79,7 +79,7 @@ module.exports = {
     const root = tmpRepo();
     gitInit(root); commit(root, 'init');
     // Seed a state.json where arch-review ran 2 days ago (weekly → skipped tonight).
-    write(root, '.nightwatch/state.json', JSON.stringify(
+    write(root, '.nightwatch/runtime/cursors.json', JSON.stringify(
       mkState({ 'repo-reconcile': YESTERDAY, 'arch-review': TWO_AGO, 'release-progress': YESTERDAY }), null, 2) + '\n');
 
     const res = orch(root);
@@ -87,7 +87,7 @@ module.exports = {
     assert.deepStrictEqual(res.due, ['repo-reconcile', 'release-progress']);
     assert.deepStrictEqual(res.skipped.map((s) => s.job), ['arch-review']);
 
-    const st = readJSON(root, '.nightwatch/state.json');
+    const st = readJSON(root, '.nightwatch/runtime/cursors.json');
     const arch = st.jobs['arch-review'];
     // Cursor is human-inspectable and did NOT advance (the job never ran tonight).
     assert.strictEqual(arch.cadence, 'weekly');
@@ -108,13 +108,13 @@ module.exports = {
     const first = orch(root);
     assert.strictEqual(first.status, 'ran');
     assert.deepStrictEqual(first.due, ['repo-reconcile', 'arch-review', 'release-progress'], 'fresh night runs all');
-    const afterFirst = readFile(root, '.nightwatch/state.json');
+    const afterFirst = readFile(root, '.nightwatch/runtime/cursors.json');
     const listAfterFirst = git(root, ['status', '--porcelain']);
 
     const second = orch(root);
     assert.strictEqual(second.status, 'noop', 'second same-night invocation is a no-op');
     assert.deepStrictEqual(second.due, [], 'no jobs planned → no tokens spent');
-    assert.strictEqual(readFile(root, '.nightwatch/state.json'), afterFirst, 'state.json byte-identical (no writes)');
+    assert.strictEqual(readFile(root, '.nightwatch/runtime/cursors.json'), afterFirst, 'state.json byte-identical (no writes)');
     assert.strictEqual(git(root, ['status', '--porcelain']), listAfterFirst, 'no file changes on the no-op run');
 
     const forced = orch(root, ['--force']);
@@ -128,7 +128,7 @@ module.exports = {
     const res = orch(root, ['--plan']);
     assert.strictEqual(res.status, 'plan');
     assert.deepStrictEqual(res.due, ['repo-reconcile', 'arch-review', 'release-progress']);
-    assert.strictEqual(readFile(root, '.nightwatch/state.json'), null, '--plan wrote nothing');
+    assert.strictEqual(readFile(root, '.nightwatch/runtime/cursors.json'), null, '--plan wrote nothing');
     assert.strictEqual(git(root, ['status', '--porcelain']).trim(), '', 'working tree untouched by --plan');
   },
 
@@ -137,7 +137,7 @@ module.exports = {
     const res = orch(root);
     assert.strictEqual(res.status, 'abort');
     assert.strictEqual(res.reason, 'not-a-git-checkout');
-    assert.strictEqual(readFile(root, '.nightwatch/state.json'), null, 'abort writes no scheduler state');
+    assert.strictEqual(readFile(root, '.nightwatch/runtime/cursors.json'), null, 'abort writes no scheduler state');
   },
 
   // Story 4.3 / FR32 AC4 — a directory that is NOT a git checkout aborts, but the human still wakes
@@ -156,7 +156,7 @@ module.exports = {
     const failLines = brief.split('\n').filter((l) => l.startsWith('- '));
     assert.strictEqual(failLines.length, 1, 'exactly one line in the stub');
     // The abort still writes nothing but the stub brief inside `.nightwatch/**`.
-    assert.strictEqual(readFile(root, '.nightwatch/state.json'), null, 'no scheduler state on abort');
+    assert.strictEqual(readFile(root, '.nightwatch/runtime/cursors.json'), null, 'no scheduler state on abort');
   },
 
   // ---- AC (d): a completed run writes ONLY within the declared write surface ---------------
@@ -175,7 +175,7 @@ module.exports = {
       const p = line.replace(/^\S+\s+/, '');
       assert.ok(p.startsWith('.nightwatch/'), `write outside surface: ${line}`);
     }
-    assert.ok(readFile(root, '.nightwatch/state.json') != null, 'state.json was written');
+    assert.ok(readFile(root, '.nightwatch/runtime/cursors.json') != null, 'state.json was written');
     // Source files are byte-unchanged (no modification, no refactor).
     assert.strictEqual(readFile(root, 'src/app.js'), 'module.exports = 1;\n');
     assert.strictEqual(readFile(root, 'README.md'), '# app\n');

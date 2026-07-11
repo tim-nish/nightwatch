@@ -154,7 +154,7 @@
  */
 
 /**
- * A per-member cadence cursor inside `.nightwatch/state.json`. Deliberately human-inspectable:
+ * A per-member cadence cursor inside `.nightwatch/runtime/cursors.json`. Deliberately human-inspectable:
  * a reader sees the job's cadence, when it last ran, how many times, and the date it is next due
  * — the whole "what ran / what's due / why skipped" decision is auditable without re-deriving it.
  * @typedef {object} JobCursor
@@ -165,7 +165,8 @@
  */
 
 /**
- * `.nightwatch/state.json` — the orchestrator's durable scheduling state (FR31). Cadence cursors
+ * `.nightwatch/runtime/cursors.json` — the orchestrator's durable scheduling state (FR31), under the
+ * disposable `runtime/` boundary (was `.nightwatch/state.json`). Cadence cursors
  * plus `last_brief_date` make cadence decisions and per-night idempotency mechanical and legible.
  * @typedef {object} NightwatchState
  * @property {number} schema Major schema version of this state file.

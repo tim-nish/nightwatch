@@ -105,7 +105,7 @@ module.exports = {
     write(root, '.gitignore', 'node_modules/\n.nightwatch/out/\n'); // pre-existing legacy line
     commit(root, 'legacy gitignore');
     runInit(root, { adapters: [] });
-    assert.ok(/^out\/$/m.test(readFile(root, '.nightwatch/.gitignore')), 'nested ignore written');
+    assert.ok(/^runtime\/$/m.test(readFile(root, '.nightwatch/.gitignore')), 'nested ignore written (runtime/)');
     assert.strictEqual(readFile(root, '.gitignore'), 'node_modules/\n.nightwatch/out/\n', 'root .gitignore byte-identical (legacy line left in place)');
   },
 };
