@@ -14,7 +14,33 @@
 // line so a wrong scope is visible, never silent.
 const fs = require('fs');
 const path = require('path');
-const { makeIgnore, git } = require('./util');
+const { makeIgnore, git, exists } = require('./util');
+
+// Manifests that mark an import substrate, mirroring the extractor adapters' `detect` (node = a
+// package.json; python = pyproject.toml / setup.py / requirements.txt). Kept here (not by requiring
+// the adapters) so class detection stays a cheap, dependency-free file check. Each pairs with the
+// lockfile(s) that, WITHOUT the manifest, are an orphan — a lockfile alone is not a substrate.
+const SUBSTRATE_MANIFESTS = ['package.json', 'pyproject.toml', 'setup.py', 'setup.cfg', 'requirements.txt', 'Cargo.toml', 'go.mod'];
+const ORPHAN_LOCKS = [
+  ['package-lock.json', 'package.json'], ['yarn.lock', 'package.json'], ['pnpm-lock.yaml', 'package.json'],
+  ['poetry.lock', 'pyproject.toml'], ['Cargo.lock', 'Cargo.toml'],
+];
+
+/**
+ * Detect a repo's CLASS (spec content-repo-scoping P1, FR100): `code` when an import substrate is
+ * present (a manifest an extractor adapter would detect), else `content`. A lockfile with no
+ * manifest is NOT a substrate — it is reported as an orphan hygiene notice. Deterministic and
+ * dependency-free (file-existence only); computed per plan, never stored — callers derive scoping
+ * defaults and wording from it but the human declaration in config.yaml always wins.
+ * @param {string} root @returns {{ klass:'code'|'content', substrate:boolean, orphanLockfiles:string[] }}
+ */
+function detectRepoClass(root) {
+  const substrate = SUBSTRATE_MANIFESTS.some((m) => exists(path.join(root, m)));
+  const orphanLockfiles = ORPHAN_LOCKS
+    .filter(([lock, manifest]) => exists(path.join(root, lock)) && !exists(path.join(root, manifest)))
+    .map(([lock]) => lock).sort();
+  return { klass: substrate ? 'code' : 'content', substrate, orphanLockfiles };
+}
 
 // Top-level directories that are almost always product surface, so the drift nudge never flags them
 // (entry-point dirs, docs, tests). Mirrors init.js's allowlist — both keep undeclared-dir signals
@@ -126,7 +152,8 @@ function excludedTopDirs(root, config, listTop) {
  * — glob exclusion is inherited, so the matcher runs only down to the first excluded ancestor.
  * @param {string} root @param {{ignore?: string[], dev_tooling?: string[]}} config
  * @returns {{ analyzed_files:number, excluded_files:number,
- *             analyzed:{dir:string,files:number}[], excluded:{dir:string,files:number}[] }}
+ *             analyzed:{dir:string,files:number}[], excluded:{dir:string,files:number}[],
+ *             repo_class:'code'|'content', substrate:boolean, orphan_lockfiles:string[] }}
  */
 function scopePreview(root, config) {
   const globs = analysisExcludeGlobs(config);
@@ -155,7 +182,13 @@ function scopePreview(root, config) {
   const toArr = (m) => [...m.entries()].map(([dir, files]) => ({ dir, files }))
     .sort((a, b) => b.files - a.files || a.dir.localeCompare(b.dir));
   const sum = (m) => [...m.values()].reduce((a, b) => a + b, 0);
-  return { analyzed_files: sum(analyzed), excluded_files: sum(excluded), analyzed: toArr(analyzed), excluded: toArr(excluded) };
+  // Repo class (FR100): the preview states it in one line so a no-substrate repo shows that its
+  // tracked content is analyzed as product by default (not swallowed by an inverted heuristic).
+  const rc = detectRepoClass(root);
+  return {
+    analyzed_files: sum(analyzed), excluded_files: sum(excluded), analyzed: toArr(analyzed), excluded: toArr(excluded),
+    repo_class: rc.klass, substrate: rc.substrate, orphan_lockfiles: rc.orphanLockfiles,
+  };
 }
 
 /** Git-tracked top-level directory names (a dir = a tracked path with a slash), sorted. */
@@ -194,19 +227,56 @@ function authorityTopSegments(authority) {
  * @param {{ authority?: any, gitFn?: any, trackedTop?: string[] }} [opts]
  * @returns {string[]}
  */
+/** Top-level segments named by a `!dir/**` re-include in either tier — a human declaration about them. */
+function reincludedTopSegments(config) {
+  const set = new Set();
+  for (const g of [...(config && config.ignore || []), ...(config && config.dev_tooling || [])]) {
+    if (typeof g === 'string' && g[0] === '!') {
+      const body = g.slice(1);
+      const seg = body.indexOf('/') === -1 ? body : body.slice(0, body.indexOf('/'));
+      if (seg) set.add(seg);
+    }
+  }
+  return set;
+}
+
 function unclassifiedTopDirs(root, config, opts = {}) {
+  // Substrate-aware (FR100): in a CONTENT-class repo the "referenced by no product import" heuristic
+  // is disabled and every tracked dir is product by default, so the "unclassified" vocabulary does
+  // not apply — there is nothing to nag. Only a CODE-class repo has undeclared dirs to surface.
+  const klass = opts.klass || detectRepoClass(root).klass;
+  if (klass === 'content') return [];
   const excluded = makeIgnore(analysisExcludeGlobs(config));
   const authTops = authorityTopSegments(opts.authority);
+  const reincluded = reincludedTopSegments(config);
   const dirs = opts.trackedTop || trackedTopDirs(root, opts.gitFn);
   return dirs.filter((d) =>
     !excluded(`${d}/__scope_probe__`)
     && !PRODUCT_DIR_ALLOWLIST.has(d)
-    && !authTops.has(d)
+    && !authTops.has(d)          // a declared authority artifact classifies its dir
+    && !reincluded.has(d)        // a confirmed `!dir/**` re-include classifies it too (FR100)
   ).sort();
+}
+
+/**
+ * Product-by-default top-level dirs (FR100): in a CONTENT-class repo, tracked top-level directories
+ * that scope analyzes as product (not excluded, not on the shipped allowlist which is already
+ * product). The brief nudges each ONCE on first appearance ("analyzed as product; declare to
+ * exclude") — the collector filters this against the ledger's seen set. Empty for a code-class repo.
+ * @param {string} root @param {{ignore?:string[],dev_tooling?:string[]}} config
+ * @param {{ klass?:'code'|'content', gitFn?:any, trackedTop?:string[] }} [opts] @returns {string[]}
+ */
+function productByDefaultDirs(root, config, opts = {}) {
+  const klass = opts.klass || detectRepoClass(root).klass;
+  if (klass !== 'content') return [];
+  const excluded = makeIgnore(analysisExcludeGlobs(config));
+  const dirs = opts.trackedTop || trackedTopDirs(root, opts.gitFn);
+  return dirs.filter((d) => !excluded(`${d}/__scope_probe__`) && !PRODUCT_DIR_ALLOWLIST.has(d)).sort();
 }
 
 module.exports = {
   DEFAULT_IGNORE, DEFAULT_DEV_TOOLING, PRODUCT_DIR_ALLOWLIST,
   extendGlobs, analysisExcludeGlobs, excludedTopDirs, scopePreview,
-  trackedTopDirs, authorityTopSegments, unclassifiedTopDirs,
+  trackedTopDirs, authorityTopSegments, reincludedTopSegments, unclassifiedTopDirs,
+  detectRepoClass, productByDefaultDirs,
 };

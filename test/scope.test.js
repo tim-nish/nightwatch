@@ -8,12 +8,52 @@ const assert = require('assert');
 const { tmpRepo, write } = require('./helpers');
 const {
   DEFAULT_IGNORE, DEFAULT_DEV_TOOLING, extendGlobs, analysisExcludeGlobs, excludedTopDirs, scopePreview,
+  detectRepoClass, productByDefaultDirs, unclassifiedTopDirs,
 } = require('../scripts/lib/scope');
 const { walkFiles, makeIgnore } = require('../scripts/lib/util');
 const { loadConfig } = require('../scripts/lib/config');
 const { collect } = require('../scripts/collect-brief');
 
 module.exports = {
+  // ---- Story 12.2 / FR100 — substrate probe & product-by-default ----------------------------
+
+  'detectRepoClass: a manifest → code; no manifest → content; orphan lockfile flagged (FR100)': () => {
+    const code = tmpRepo(); write(code, 'pyproject.toml', '[project]\n'); write(code, 'src/a.py', 'x');
+    assert.deepStrictEqual(detectRepoClass(code), { klass: 'code', substrate: true, orphanLockfiles: [] });
+
+    const content = tmpRepo(); write(content, 'ideas/x.md', '# idea');
+    assert.strictEqual(detectRepoClass(content).klass, 'content', 'no manifest → content');
+
+    const orphan = tmpRepo(); write(orphan, 'package-lock.json', '{}'); write(orphan, 'q_a/x.md', '# q');
+    const rc = detectRepoClass(orphan);
+    assert.strictEqual(rc.klass, 'content', 'a lockfile without package.json is not a substrate');
+    assert.deepStrictEqual(rc.orphanLockfiles, ['package-lock.json'], 'the orphan is named');
+  },
+
+  'unclassifiedTopDirs: content-class returns [] (product-by-default, no "unclassified" nag) (FR100)': () => {
+    assert.deepStrictEqual(unclassifiedTopDirs('/x', loadConfig(tmpRepo()).config, { trackedTop: ['ideas', 'lessons'], klass: 'content' }), []);
+  },
+
+  'unclassifiedTopDirs: code-class classifies a dir named by a confirmed re-include (FR100)': () => {
+    const cfg = { ...loadConfig(tmpRepo()).config, dev_tooling: [...DEFAULT_DEV_TOOLING, '!spaces/**'] };
+    const dirs = unclassifiedTopDirs('/x', cfg, { trackedTop: ['spaces', 'services'], klass: 'code' });
+    assert.deepStrictEqual(dirs, ['services'], 'spaces/ is classified by its !spaces/** re-include; services/ is not');
+  },
+
+  'productByDefaultDirs: content-class lists analyzed non-allowlisted tracked dirs; empty for code (FR100)': () => {
+    const cfg = loadConfig(tmpRepo()).config;
+    assert.deepStrictEqual(productByDefaultDirs('/x', cfg, { klass: 'content', trackedTop: ['ideas', 'src', '_bmad'] }), ['ideas'],
+      'ideas is product-by-default; src is allowlisted; _bmad is convention-excluded');
+    assert.deepStrictEqual(productByDefaultDirs('/x', cfg, { klass: 'code', trackedTop: ['ideas'] }), [], 'code-class → no product-by-default list');
+  },
+
+  'scopePreview: states the repo class (FR100)': () => {
+    const r = tmpRepo(); write(r, 'ideas/x.md', '# idea');
+    const p = scopePreview(r, loadConfig(r).config);
+    assert.strictEqual(p.repo_class, 'content');
+    assert.strictEqual(p.substrate, false);
+  },
+
   // ---- extend-not-replace + negation --------------------------------------------------------
   'extendGlobs: an absent user list yields the shipped defaults verbatim': () => {
     assert.deepStrictEqual(extendGlobs(DEFAULT_IGNORE, undefined), [...DEFAULT_IGNORE].sort());

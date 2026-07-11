@@ -14,6 +14,7 @@ const { loadConfig } = require('../scripts/lib/config');
 function fixture() {
   const root = tmpRepo();
   gitInit(root);
+  write(root, 'package.json', '{"name":"demo"}');  // code-class → heuristic fires
   write(root, 'src/app.js', "const u = require('./util');\nconst x = require('../lib/x');\n");
   write(root, 'src/util.js', 'module.exports = 1;\n');
   write(root, 'lib/x.js', 'module.exports = 2;\n');
@@ -39,6 +40,23 @@ module.exports = {
     assert.ok(!('docs' in byDir), 'docs is allowlisted product content → not a candidate');
     // deterministic order
     assert.deepStrictEqual(cands.map((c) => c.dir), ['_bmad', 'agents', 'q_a']);
+  },
+
+  // Story 12.2 / FR100 — a content-class repo (no import substrate) disables the "no product import"
+  // heuristic, so it can never propose the product itself as tooling; only conventions are candidates.
+  'detect: content-class repo disables the heuristic — only conventions proposed (FR100)': () => {
+    const root = tmpRepo();
+    gitInit(root);                                   // NO manifest → content-class
+    write(root, 'ideas/x.md', '# idea');             // content product, not a convention
+    write(root, '_bmad/agent.md', '# planning');     // shipped convention
+    write(root, 'agents/prompt.md', '# prompt lib'); // would be a heuristic candidate in a CODE repo
+    commit(root, 'init');
+    const cands = detectDevToolingCandidates(root);
+    const byDir = Object.fromEntries(cands.map((c) => [c.dir, c.source]));
+    assert.strictEqual(byDir['_bmad'], 'convention', 'conventions are still proposed');
+    assert.ok(!('ideas' in byDir), 'content product is never proposed as tooling');
+    assert.ok(!('agents' in byDir), 'the heuristic is disabled — no heuristic candidates in a content repo');
+    assert.ok(cands.every((c) => c.source === 'convention'), 'only convention candidates in a content-class repo');
   },
 
   'detect: is read-only — the working tree is untouched': () => {

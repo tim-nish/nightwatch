@@ -18,7 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const { exists, readFileSafe, ensureDir, git, makeIgnore, walkFiles } = require('./util');
-const { DEFAULT_DEV_TOOLING, analysisExcludeGlobs } = require('./scope');
+const { DEFAULT_DEV_TOOLING, analysisExcludeGlobs, detectRepoClass } = require('./scope');
 const { loadConfig } = require('./config');
 const { draftMilestones } = require('./milestones');
 const { loadAdapters } = require('../extract-signals');
@@ -354,7 +354,7 @@ function referencedTopSegments(root, productFiles) {
  * A convention match wins over a heuristic one. Deterministic (sorted). Injectables (`gitFn`,
  * `files`, `config`, `diskDirs`) keep it unit-testable.
  * @param {string} root
- * @param {{ gitFn?: (root:string, args:string[], opts?:any)=>(string|null), files?: string[], config?: any, diskDirs?: string[] }} [opts]
+ * @param {{ gitFn?: (root:string, args:string[], opts?:any)=>(string|null), files?: string[], config?: any, diskDirs?: string[], klass?: 'code'|'content' }} [opts]
  * @returns {{ dir:string, glob:string, source:'convention'|'heuristic', reason:string }[]}
  */
 function detectDevToolingCandidates(root, opts = {}) {
@@ -374,12 +374,18 @@ function detectDevToolingCandidates(root, opts = {}) {
       seen.add(dir);
     }
   }
-  // heuristics: git-tracked top-level dirs no product import references.
-  for (const dir of trackedTopDirs(root, gitFn)) {
-    if (seen.has(dir)) continue;
-    if (!refs.has(dir) && !PRODUCT_DIR_ALLOWLIST.has(dir)) {
-      candidates.push({ dir, glob: `${dir}/**`, source: 'heuristic', reason: 'top-level tracked directory referenced by no product import' });
-      seen.add(dir);
+  // Heuristics: git-tracked top-level dirs no product import references. DISABLED for a content-class
+  // repo (FR100) — with no import substrate the "referenced by no product import" test is vacuous
+  // (nothing is imported), so it would flag the whole product as tooling. Only convention candidates
+  // are proposed there; every other tracked dir stays product by default.
+  const klass = opts.klass || detectRepoClass(root).klass;
+  if (klass === 'code') {
+    for (const dir of trackedTopDirs(root, gitFn)) {
+      if (seen.has(dir)) continue;
+      if (!refs.has(dir) && !PRODUCT_DIR_ALLOWLIST.has(dir)) {
+        candidates.push({ dir, glob: `${dir}/**`, source: 'heuristic', reason: 'top-level tracked directory referenced by no product import' });
+        seen.add(dir);
+      }
     }
   }
   return candidates.sort((a, b) => a.dir.localeCompare(b.dir));
