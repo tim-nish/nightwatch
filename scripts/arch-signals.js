@@ -6,7 +6,7 @@
 // duplication, hidden coupling (via git-signals), layering (only when declared), growth.
 // Writes out/arch-signals-<date>.json.
 const path = require('path');
-const { parseArgs, repoRoot, todayISO, walkFiles, readFileSafe, topSegment, globToRegExp, writeJSON, outDir } = require('./lib/util');
+const { parseArgs, guardCli, repoRoot, todayISO, walkFiles, readFileSafe, topSegment, globToRegExp, writeJSON, outDir } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
 const { analysisExcludeGlobs } = require('./lib/scope');
 const { gitSignals } = require('./git-signals');
@@ -162,7 +162,7 @@ function archSignals(root) {
 }
 
 function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = guardCli('arch-signals.js', process.argv.slice(2), ['date']);
   const root = repoRoot(args);
   const date = todayISO(args);
   const sig = archSignals(root);

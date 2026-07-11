@@ -4,7 +4,7 @@
 // git-signals.js — universal signals from git history alone (no language awareness):
 // churn, co-change coupling across module boundaries, hotspots. Always available in any
 // git repo. Usable as a CLI (--repo . writes out/git-signals-<date>.json) or as a module.
-const { parseArgs, repoRoot, todayISO, git, isGitRepo, commitCount, topSegment, makeIgnore, walkFiles, readFileSafe, writeJSON, outDir } = require('./lib/util');
+const { parseArgs, guardCli, repoRoot, todayISO, git, isGitRepo, commitCount, topSegment, makeIgnore, walkFiles, readFileSafe, writeJSON, outDir } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
 const { analysisExcludeGlobs } = require('./lib/scope');
 const { makeSignal, writeSignals } = require('./lib/signals');
@@ -166,7 +166,7 @@ function universalGitSignals(root, opts = {}) {
 }
 
 function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = guardCli('git-signals.js', process.argv.slice(2), ['date', 'window']);
   const root = repoRoot(args);
   const date = todayISO(args);
   const window = args.window ? parseInt(args.window, 10) : 400;

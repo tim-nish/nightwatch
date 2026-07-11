@@ -11,7 +11,7 @@
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { parseArgs, repoRoot, todayISO, exists, readFileSafe, walkFiles, writeJSON, outDir, globToRegExp, ensureDir, git, isGitRepo } = require('./lib/util');
+const { parseArgs, guardCli, repoRoot, todayISO, exists, readFileSafe, walkFiles, writeJSON, outDir, globToRegExp, ensureDir, git, isGitRepo } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
 const { analysisExcludeGlobs } = require('./lib/scope');
 const { inventory } = require('./surface-inventory');
@@ -508,7 +508,7 @@ function reconcile(root, opts = {}) {
 }
 
 function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = guardCli('reconcile.js', process.argv.slice(2), ['date', 'force']);
   const root = repoRoot(args);
   const date = todayISO(args);
   const res = reconcile(root, { date, force: !!args.force });

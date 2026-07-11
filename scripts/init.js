@@ -26,7 +26,7 @@
 //                      write flag, PRINT the proposed diffs (read-only); with `--dev-tooling a,b`,
 //                      APPLY the confirmed dev-tooling additions (unioned with the current set,
 //                      config.yaml otherwise byte-preserved). Never invoked on a scheduled run.
-const { parseArgs, repoRoot, isGitRepo } = require('./lib/util');
+const { parseArgs, guardCli, repoRoot, isGitRepo } = require('./lib/util');
 const { runInit, detectDevToolingCandidates, planMigration, planRuntimeMigration, planUpdate, applyUpdate } = require('./lib/init');
 
 /** Split a comma-separated `--dev-tooling` value into trimmed entries; a bare `--dev-tooling` = []. */
@@ -37,7 +37,7 @@ function parseDevTooling(val) {
 }
 
 function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = guardCli('init.js', process.argv.slice(2), ['probe', 'detect-dev-tooling', 'detect-migration', 'dev-tooling', 'migrate', 'no-config', 'update']);
   const root = repoRoot(args);
   // init only makes sense inside a git checkout (same precondition as the overnight orchestrator).
   if (!isGitRepo(root)) {

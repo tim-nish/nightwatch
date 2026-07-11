@@ -6,7 +6,7 @@
 // the EXACT `.nightwatch/config.yaml` ignore block each choice would write, previewed before any
 // write. Read-only — writes nothing. The screen's labels and the yes/no gate live in
 // commands/nightwatch.md; this script is the deterministic data it renders.
-const { parseArgs, repoRoot, isGitRepo, git } = require('./lib/util');
+const { parseArgs, guardCli, repoRoot, isGitRepo, git } = require('./lib/util');
 const { classifyUntracked, renderIgnorePreview } = require('./lib/firstrun');
 
 /** Untracked, non-git-ignored files (repo-relative), sorted — the ones a run would otherwise analyze. */
@@ -17,7 +17,7 @@ function untrackedFiles(root) {
 }
 
 function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = guardCli('first-run.js', process.argv.slice(2), ['date']);
   const root = repoRoot(args);
   if (!isGitRepo(root)) {
     process.stdout.write(JSON.stringify({ status: 'abort', reason: 'not-a-git-checkout' }, null, 2) + '\n');

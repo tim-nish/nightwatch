@@ -14,7 +14,7 @@
 // Writes nothing outside `.nightwatch/` (NFR3): the findings doc under out/, and finding rows
 // appended to the ledger. Two runs on an unchanged repo yield identical finding ids (NFR8).
 const path = require('path');
-const { parseArgs, repoRoot, todayISO, walkFiles, topSegment, writeJSON, outDir, readFileSafe } = require('./lib/util');
+const { parseArgs, guardCli, repoRoot, todayISO, walkFiles, topSegment, writeJSON, outDir, readFileSafe } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
 const { analysisExcludeGlobs } = require('./lib/scope');
 const { archSignals } = require('./arch-signals');
@@ -286,7 +286,7 @@ function archReview(root, opts = {}) {
 }
 
 function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = guardCli('arch-review.js', process.argv.slice(2), ['date', 'force']);
   const root = repoRoot(args);
   const date = todayISO(args);
   const res = archReview(root, { date, force: !!args.force });

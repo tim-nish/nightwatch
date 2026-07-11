@@ -20,7 +20,7 @@
 // ceiling + bounded duration estimate, and a deterministic zero-model-token scope preview. Adding
 // or removing any of it changes no scheduling decision — those come from schedule.js alone.
 const path = require('path');
-const { parseArgs, repoRoot, todayISO, isGitRepo, outDir, outReadPath, exists, readJSONSafe, writeJSON } = require('./lib/util');
+const { parseArgs, guardCli, repoRoot, todayISO, isGitRepo, outDir, outReadPath, exists, readJSONSafe, writeJSON } = require('./lib/util');
 const { ledgerPath } = require('./lib/findings');
 const {
   readState, writeState, reconcileState, planRun, alreadyRanTonight, recordRun, markBriefed,
@@ -150,7 +150,7 @@ function writeRunStatusScope(root, date, { scope, estimate }) {
 }
 
 function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = guardCli('orchestrate.js', process.argv.slice(2), ['date', 'force', 'plan', 'yes']);
   const root = repoRoot(args);
   const date = todayISO(args);
   const res = orchestrate(root, date, { force: !!args.force, planOnly: !!args.plan, yes: !!args.yes });

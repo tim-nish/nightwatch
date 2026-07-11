@@ -5,7 +5,7 @@
 // Feeds /release-progress as the "generic" source of done. Each check is pass|fail|skip
 // with evidence. Configurable via config `release_checks.disable: [ids]`.
 const path = require('path');
-const { parseArgs, repoRoot, todayISO, walkFiles, readFileSafe, exists, git, writeJSON, outDir } = require('./lib/util');
+const { parseArgs, guardCli, repoRoot, todayISO, walkFiles, readFileSafe, exists, git, writeJSON, outDir } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
 const { analysisExcludeGlobs } = require('./lib/scope');
 
@@ -135,7 +135,7 @@ function releaseChecks(root) {
 }
 
 function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = guardCli('release-checks.js', process.argv.slice(2), ['date']);
   const root = repoRoot(args);
   const date = todayISO(args);
   const out = releaseChecks(root);
