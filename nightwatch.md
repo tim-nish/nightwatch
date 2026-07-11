@@ -117,9 +117,23 @@ carry that guarantee:
      excluded from all member jobs' analysis). Shipped defaults cover well-known
      conventions for both tiers; user-supplied lists **extend** the defaults rather
      than replace them, with `!pattern` negation to re-include a default-excluded
-     path deliberately. Verification is the last line of defense, not a scoping
-     mechanism: excluded trees cost zero extraction, judgment, and verification
-     tokens. Exclusions are stated in one brief line, never silent.
+     path deliberately. **Negation is match-based** (gitignore-style precedence: the
+     most specific matching pattern wins, a tie goes to the negation), so a subpath of
+     an excluded parent is re-includable with one entry — e.g. the shipped default
+     `!.claude/commands/**` keeps agent commands (behavior, not workspace) in scope
+     under an excluded `.claude/**`. **Product scope is substrate-aware** (spec:
+     `docs/specs/content-repo-scoping.md`): when no extractor detects an import
+     substrate, every tracked top-level directory is **product by default** — only
+     narrow convention exclusions apply, and the "referenced by no product import"
+     heuristic is disabled as vacuous; declarations always win over either default
+     profile. Shipped-default membership carries a stated criterion (recognizable
+     dev-workspace convention, near-zero chance of being product surface — `q_a/**`
+     failed it and is not a default). Verification is the last line of defense, not a
+     scoping mechanism: excluded trees cost zero extraction, judgment, and verification
+     tokens. Exclusions are stated in one brief line, never silent — and when an
+     exclusion empties a signal source a member job consumes (command files, specs, doc
+     claims, import graph), that job's `degraded` list names both the glob and the
+     consequence, so a scope-caused empty result can never read as a clean verdict.
 3. **Extractor adapters with a universal fallback (§2.6).** Language-aware signals
    come from mature ecosystem analyzers wrapped in thin adapters, selected by
    lockfile/manifest detection (`extractors: auto`). When no adapter matches — or its
@@ -246,7 +260,11 @@ coupled — any job runs standalone, and a partial night degrades cleanly.
   rather than misreading it.
 - `id` is stable across runs (content-hash of locus + kind) — this is what makes
   ledger dedupe, recurrence counting, and acted-on/dismissed tracking work.
-- `severity`: 1 blocker … 5 nice-to-have.
+- `severity`: integer 1–5, **1 = blocker/worst … 5 = nice-to-have** — this direction is
+  normative for every producer and consumer (the `lib/types.js` typedef conforms to this
+  line, never the reverse; findings 0030). Blocker *classification* keys on
+  `kind: "blocker"` — `severity === 1` alone never promotes a finding to blocker, so a
+  producer disagreeing about scale direction cannot fabricate release blockers.
 - `verified`: survived the adversarial pass; only verified findings enter the brief.
 - `next_step` (optional): the finding's morning rendering — `summary` (imperative,
   verb-first, ≤ 60 chars), `command` (copy-pasteable, optional), `effort_min` (coarse
@@ -261,6 +279,13 @@ coupled — any job runs standalone, and a partial night degrades cleanly.
   (`recheck_budget`, reserved before new discovery), and records the classification as
   ledger rows; forced re-runs always leave a ledger trace (`forced: true`). Patch files
   are named per finding id and are never deleted while their finding is open.
+  Classification is **run-relative** (P7): the incoming open set excludes rows written
+  by the current run (keyed on run identity, not date alone), so tonight's rows are
+  outputs, never inputs — on a repo's first run the incoming open set is empty and
+  every finding classifies as **new** (no freshness suffix; arithmetic "N new,
+  0 re-observed"). The ledger holds exactly **one authoritative run row per (job, date,
+  ordinal)**, appended once after the owning job's judgment completes with the real
+  findings count — never a pre-judgment placeholder (findings 0032/0034).
 
 All shared schemas (findings, signals, tracker items) are defined exactly once, as
 JSDoc typedefs in `lib/types.js` (§2.8); every producer and consumer imports them.
@@ -482,11 +507,19 @@ instead of re-deriving them. Output: `out/surface-<date>.json`.
    run — listed for a daytime check, never guessed).
 4. Adversarial pass: a second subagent attempts to refute each `drifted` verdict;
    only survivors reach the brief.
-5. For drifted claims in `derived` artifacts: generate a unified-diff **patch file**
+5. For drifted claims in `derived` artifacts **whose fix is a pure deletion** (stale
+   text whose source is gone): generate a unified-diff **patch file**
    at `runtime/out/reconcile-<date>-<finding-id>.patch` (per-finding naming; a patch is
    never deleted while its finding is open — spec: `docs/specs/finding-lifecycle.md`
-   P5). Patch files are the default and only mechanism;
-   if `patch_branch: true`, additionally apply the patch on branch
+   P5). **The mechanical patch surface is delete-only by design**
+   (`docs/specs/reconcile-patch-workflow.md` P3, maintainer Decision 2 2026-07-11):
+   additive or modifying drift on a `derived` artifact is a `human-decision` finding
+   that presents the proposed text as proposal content in the finding body — never a
+   hand-assembled patch file outside the helper contract, and no undocumented entry
+   path for judgment-authored patches exists. Additive/modify helpers become a proposal
+   again only when repeated dogfooding shows the human applying proposed text
+   unmodified.
+   If `patch_branch: true`, additionally apply the patch on branch
    `nightwatch/reconcile/<date>` created in a **temporary worktree** — the user's
    working tree and checked-out branch are never touched. For drifted claims
    involving an `authoritative` artifact: `human-decision`, and no patch is ever
@@ -593,7 +626,15 @@ universal signals plus `degraded` notice naming the missing tool and its one-lin
 install hint; adapter crashes or emits unparsable output → that adapter's signals
 dropped with a notice, everything else proceeds; shallow git history (< 20 commits) →
 co-change checks skipped with notice; budget exhausted → partial output labeled
-partial.
+partial. **Honest emptiness (content-repo-scoping P7):** per signal class, *empty with
+substrate* renders as clean, but *empty without substrate* (no imports for
+duplication/import-overlap, no typed language for speculation, a scope-emptied source)
+carries one `degraded` line naming the class as vacuous — and a live threshold that
+provably exceeds the observable maximum (e.g. coupling `min_commits` above the repo's
+max per-file churn) is stated with both numbers, reporting only, never auto-tuned. A
+run whose signal classes are **all** vacuous emits a single summary degraded line, and
+its zero-candidate judgment path is explicit: skip the adversarial refute pass, emit an
+empty findings file with the degradations, stop.
 
 **Acceptance criteria:**
 - [ ] Fixture with a one-implementation interface *with* an authority-doc mandate and
@@ -705,21 +746,34 @@ parse identically. Ids are stable and backend-independent; completed items move 
    fully functional standalone.
 2. Reconcile the store against reality: complete items whose evidence now exists
    (recording the evidence link); upsert newly discovered items; promote
-   `human-decision` findings into **Human decisions needed** and severity-1 findings
-   into **Release blockers** — cross-referenced by finding id, so they clear
+   `human-decision` findings into **Human decisions needed** and `blocker`-kind findings
+   into **Release blockers** (§2.5 — never keyed on a severity endpoint) —
+   cross-referenced by finding id, so they clear
    automatically when the source finding clears.
 3. Never delete an item it didn't create; a human-added item that appears obsolete is
    tagged `(stale? — confirm)` instead.
 4. Recompute `progress:` (fraction of definition-of-done items plus blockers
    resolved — a coarse honest number, not a promise); re-derive the road's milestone
-   marks from criteria state; refresh **Next actions** (top 3, each naming — in words —
+   marks from criteria state **and persist the resolved criterion→done map** —
+   per criterion `{criterion, done, evidence, match: exact | resolved}` — into the
+   findings/tracker output (release-journey P4.1; a paraphrase the judgment layer
+   resolved is stated and becomes recorded fact); refresh **Next actions** (top 3, each
+   naming — in words —
    the milestone it advances and what closing it unlocks); append one **What changed
    lately** entry per the §2.9 status contract; `flush()`.
-5. Emit the journey payload for the brief: goal, ordered milestones with marks and the
+5. Emit the journey payload for the brief: goal, ordered milestones with marks, **the
+   criterion→done map**, and the
    current milestone's remaining criteria, blockers, decisions, next actions, plus the
    done/total ratio (the no-milestones fallback). The collector renders the brief's
    road from these fields — never the tracker's entry text (which would duplicate
-   `RELEASE.md` verbatim; §6).
+   `RELEASE.md` verbatim; §6) **and never by re-matching raw criterion text**
+   (release-journey P4.2): both roads consume the same recorded map, so RELEASE.md and
+   the brief cannot disagree about where the user stands. When the map is absent and
+   exact-text matching fails, the brief road renders the milestone state as
+   *unavailable* — naming the setup finding — instead of a wrong mark (P4.3). The
+   road's terminal line follows the declared target — *"🏁 Declare **<target>**
+   done."* — with "Tag the release." only when a version/tag release check is enabled
+   (P4.5; both documents inherit it from the same template text).
 
 **Safety rules (normative):** the only repo file the markdown backend writes is
 `RELEASE.md`; the **Notes** section and human-authored item text are byte-preserved
@@ -742,7 +796,7 @@ this run without migrating anything.
       `progress` increases, status line records it.
 - [ ] Hand-add an item and a Notes paragraph → both survive 5 consecutive runs
       byte-identical (aside from legitimate state changes).
-- [ ] Reconcile emits a severity-1 finding → it appears under Release blockers the
+- [ ] Reconcile emits a `blocker`-kind finding → it appears under Release blockers the
       same night, and moves to Done the night after the fix lands.
 - [ ] No-change night → only `updated:` and one "no change" status line differ.
 - [ ] `tracking.backend: beads` with no `bd` on PATH → `setup` finding, markdown
@@ -808,11 +862,21 @@ shown in **groups** — likely temporary/crash artifacts (e.g. `*.stackdump`, `c
 name-pattern heuristic the present human confirms, never a run-time content judgment.
 
 **`init` mode (daytime, interactive — the one mode that may ask questions):** detects
-missing `.nightwatch/STATE.md` / config; interviews the human (authority per area, phase,
-release target and definition of done, optional layers); scans the repo root for known
-dev-tooling conventions plus heuristic candidates (top-level git-tracked directories
-referenced by no product import) and confirms the classification with the human —
-confirmed entries land in `config.yaml` `dev_tooling:`, a declaration, visible and
+missing `.nightwatch/STATE.md` / config; interviews the human (authority per area, phase —
+with sharpened adjacent-phase descriptions and, when cheap deterministic signals exist
+(release/tag, published-package manifest, semver), one non-binding `Suggested:` line; on a
+no-substrate repo with no such signals, no suggestion renders and nothing weaker is
+inferred — first-run-ux P9; release target and definition of done — `milestones:` criteria
+are **copied verbatim** from DoD entries, validated at write time (release-journey P4.4);
+optional layers); classifies analysis scope **substrate-aware** (content-repo-scoping
+P1/P2/P5): with an import substrate, known dev-tooling conventions plus heuristic
+candidates (top-level git-tracked directories referenced by no product import) are
+proposed; without one, tracked content is product by default and only convention
+exclusions are proposed. Convention exclusions arrive **pre-checked** and every entry is
+described in analysis-scope terms (what including/excluding means for what Nightwatch
+analyzes); **declining a convention candidate writes its `!glob` negation** — a decline
+is a declaration, never a placebo. Confirmed entries land in
+`config.yaml` `dev_tooling:`, a declaration, visible and
 versioned, not a hidden default; probes every extractor adapter (§2.6) and offers
 install commands for detected-but-unavailable tools — the only moment tool
 installation is ever suggested; writes both declaration files (`.nightwatch/STATE.md`,
@@ -872,8 +936,12 @@ everything above the fold serves it (design inputs:
 - **Status line, derived from counts:** blockers > 0 → "**N release blocker(s).**";
   else decisions > 0 → "**N decision(s) need you.** Nothing else is blocking."; else →
   "**Quiet night.**" plus one clause naming what waits (or "Nothing needs you today."
-  at zero findings). A crashed or timed-out member is named in the status line, never
-  only below the fold.
+  at zero findings). Blocker counting keys on `kind` (§2.5). **Sanity check:** if the
+  count-derived headline would claim blockers while the road's "Blocking the release:"
+  line says "nothing" — both derive from the same night — the headline degrades to the
+  decisions-tier form and one Machine-notes line reports the disagreement (refines the
+  FR56 rule; finding 0030). A crashed or timed-out member is named in the status line,
+  never only below the fold.
 - **First-action selection is mechanical:** interleave priority class → severity →
   **advances-the-current-milestone** (boolean, from the tracker's finding↔criteria
   cross-reference) → lowest `effort_min` (absent sorts last) → id. A `human-decision`
@@ -897,10 +965,16 @@ everything above the fold serves it (design inputs:
   `Scope: <n> files analyzed; excluded <dirs with counts> — edit .nightwatch/config.yaml to change.`
 - One footer line naming both feedback methods:
   `Review interactively with /nightwatch review — or mark boxes by hand: [x] acted on, [-] dismissed.`
-- Config-drift nudge: when a run encounters a **new top-level directory not covered by
-  the resolved product scope, `ignore`, or `dev_tooling`**, a drift finding names it and
-  points at `/nightwatch init --update` — detection and reporting only; overnight writes
-  no declarations. Multiple such directories bundle into a single action (above).
+- Config-drift nudge, substrate-aware (content-repo-scoping P2): on a repo **with** an
+  import substrate, a new top-level directory not covered by the resolved product scope,
+  `ignore`, or `dev_tooling` produces a drift finding naming it and pointing at
+  `/nightwatch init --update`; a directory named by a STATE.md authority path or a
+  confirmed re-include counts as classified (no nag). On a repo **without** one, a new
+  top-level directory is product by default and produces exactly **one** Machine-notes
+  notice (*"analyzed as product (default); declare it to exclude"*) on its first
+  appearance and none after — the "unclassified" vocabulary does not apply. Detection
+  and reporting only; overnight writes no declarations. Multiple such directories bundle
+  into a single action (above).
 
 **Morning feedback loop:** brief action lines render as checkboxes (`acted-on` /
 `dismissed`); the next run backfills the marks into the ledger via
@@ -943,9 +1017,20 @@ them by contract and its prompt restates them):**
   degrades, it never triggers a download.
 - Idempotent per date: a second same-night invocation sees the cadence cursors
   (`runtime/cursors.json`) plus the dated brief and exits without re-spending tokens
-  (`--force` to override). A forced re-run always leaves a ledger trace — run and
+  (`--force` to override). **The night's own state-advancing scheduler call is immune to
+  the night's own artifacts:** its idempotency gate keys on the recorded
+  `last_brief_date` **only**, never on the dated brief file — which the same night's
+  brief-assembly step has always already written by the time cursors are advanced
+  (finding 0031; on a fresh repo the documented sequence must leave
+  `runtime/cursors.json` existing, with weekly cadences dated out). A forced re-run
+  always leaves a ledger trace — run and
   classification rows marked `forced: true`, never swallowed by the same-date guard —
   and never deletes a patch whose finding is still open (finding-lifecycle P5/P6).
+- Job CLIs never write on unknown invocations: `--help` / `-h` / an unrecognized flag
+  prints usage and exits **without executing and without writing**, and a job CLI
+  refuses to run when cwd is not a git checkout and no explicit `--repo` was given —
+  an exploratory invocation must never create `.nightwatch/` where the caller stands
+  (finding 0034).
 - Runs under a constrained permission profile in which prompts are impossible, not
   rare — unattended is precisely when a prompt cannot be answered.
 
@@ -1029,8 +1114,10 @@ the failure. No brief at all is itself a signal; the collector always attempts a
       the orientation README (or on legacy runtime paths) gets exactly one Machine-notes
       nudge; a current, correctly-configured install gets neither.
 - [ ] Zero blockers and zero decisions → the status line reads "Quiet night…"; the same
-      inputs plus one severity-1 finding flip it to name the blocker — derived from
-      counts alone, byte-deterministic.
+      inputs plus one `blocker`-kind finding flip it to name the blocker — derived from
+      counts alone, byte-deterministic. A fabricated disagreement fixture (headline
+      counts a blocker, road says "nothing") degrades to the decisions-tier headline
+      with one Machine-notes line.
 - [ ] Marking a bundled action `[x]` backfills exactly one feedback row per covered id;
       a subsequent backfill or `review` pass records no duplicates, in any interleaving
       with manual edits.
@@ -1058,8 +1145,10 @@ release:
     - "quickstart reproduces on a fresh clone in 15 minutes"
     - "all commands have specs and the reconciler reports 0 drift"
   milestones:               # optional, ORDERED — the journey the road renders; each
-    - name: "Quickstart proven"                    # references DoD items by exact text
+    - name: "Quickstart proven"                    # references DoD items by exact text —
       criteria: ["quickstart reproduces on a fresh clone in 15 minutes"]
+                            # init and init --update COPY the DoD text verbatim into
+                            # criteria and validate at write time (release-journey P4.4)
     - name: "Specs and code agree"
       criteria: ["all commands have specs and the reconciler reports 0 drift"]
 ```
@@ -1071,14 +1160,20 @@ cadence:  {repo-reconcile: nightly, arch-review: weekly, release-progress: night
 budget_tokens: {repo-reconcile: 200000, arch-review: 300000, release-progress: 100000}
 effort:   {repo-reconcile: medium, arch-review: high, release-progress: medium}
 caps:     {brief_total: 25, reconcile: 10, arch_candidates: 7}
-ignore: []                  # never analyzed; EXTENDS shipped defaults ("!pattern" re-includes)
+ignore: []                  # never analyzed; EXTENDS shipped defaults ("!pattern" re-includes;
+                            # negation is match-based — a subpath of an excluded parent
+                            # re-includes with one entry)
                             # defaults: dist/**, build/**, out/**, vendor/**, node_modules/**,
                             #           .git/**, coverage/**, **/*.lock, .nightwatch/**
 dev_tooling: []             # development-only tooling, not product; extends shipped defaults
-                            # defaults: _bmad/**, _bmad-output/**, .claude/**, .cursor/**, q_a/**
-                            # (exact default lists finalized at implementation; criterion:
-                            # recognizable dev-workspace convention, near-zero chance of
-                            # being product surface)
+                            # defaults: _bmad/**, _bmad-output/**, .claude/**,
+                            #           !.claude/commands/**, .cursor/**
+                            # (q_a/** removed 2026-07-11 — failed the criterion below on the
+                            # first outside repo; content-repo-scoping P3. Criterion, stated
+                            # per entry at the definition site: recognizable dev-workspace
+                            # convention, near-zero chance of being product surface. On a
+                            # repo with no import substrate, tracked content is product by
+                            # default — only these conventions exclude.)
 extractors: auto            # or a list, e.g. [universal-git, node-depcruise]
                             # tool resolution is always local-only: host repo's
                             # node_modules/.bin (or venv), then PATH; never installed

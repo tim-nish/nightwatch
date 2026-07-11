@@ -3,7 +3,12 @@
 - **Status:** accepted 2026-07-10 — folded into `nightwatch.md` §2.2, §6 (init), and §7
   (config template); FR42–FR43 in the epics requirements inventory. P4 is realized as
   P2's `!pattern` negation semantics rather than a separate `analyze:` key.
-  Implementation pending (Epic 6).
+  Implementation pending (Epic 6). **Superseded in part 2026-07-11 by
+  [content-repo-scoping](content-repo-scoping.md):** P2's shipped-default list and
+  extension semantics (q_a/** dropped; negation pinned match-based, fulfilling P4's
+  "one line of config" intent) and P3's init detection/confirmation (substrate-aware
+  candidates; declining a convention candidate writes its negation). The two-tier
+  vocabulary, visible-declaration principle, and P5 scope statement remain in force.
 - **Motivated by:** dogfooding finding
   [0002 — Analysis scope includes development-only tooling](../dogfooding/0002-analysis-scope-dev-tooling.md)
 - **Scope:** what the member jobs analyze. Config schema, defaults, `init` interview, and

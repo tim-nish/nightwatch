@@ -5,12 +5,18 @@
   confirmation-screen refinements)** is a second-round addition from finding 0007 — accepted
   2026-07-10 and **folded into `nightwatch.md` §6 (FR45–FR47)**; implementation pending
   (Epic 7 candidate). **P8 (repository-agnostic interview presentation)** is a fourth-round
-  addition from finding 0012 — accepted 2026-07-10; implementation pending.
+  addition from finding 0012 — accepted 2026-07-10; implementation pending. **P9
+  (phase-selection clarity)** is a sixth-round addition from finding 0026 — **accepted
+  2026-07-11 and folded into `nightwatch.md` §6 (init interview)**; implementation
+  pending (see the
+  [0026–0034 triage record](DRAFT-findings-0026-0034-triage.md)); 0026's item 3 is a P8
+  recurrence and needs no spec change, only P8 conformance.
 - **Motivated by:** dogfooding findings
   [0001 — First run gives no visibility](../dogfooding/0001-first-run-visibility.md),
   [0005 — No preview of analysis scope](../dogfooding/0005-analysis-scope-preview.md),
   [0007 — First-run confirmation screen UX](../dogfooding/0007-first-run-confirmation-ux.md) (P7),
-  and [0012 — Phase selection leaks Nightwatch's own state](../dogfooding/0012-phase-selection-leaks-own-state.md) (P8)
+  [0012 — Phase selection leaks Nightwatch's own state](../dogfooding/0012-phase-selection-leaks-own-state.md) (P8),
+  and [0026 — Init phase-selection clarity](../dogfooding/0026-init-phase-selection-clarity.md) (P9)
 - **Scope:** presentation and consent around the overnight flow in `commands/nightwatch.md`, plus
   the presentation of the `/nightwatch init` interview (P8). No change to what the jobs analyze,
   what they write, or the deterministic scheduler.
@@ -238,6 +244,31 @@ rule governs the authority, release-target, and definition-of-done prompts: desc
 them in terms of the repository being configured, so the leak cannot recur wherever the interview
 narrates by example.
 
+### P9 — Phase-selection clarity: distinguishable descriptions, non-binding suggestion *(proposed 2026-07-11)*
+
+Motivated by finding [0026](../dogfooding/0026-init-phase-selection-clarity.md). The phase step
+gathers the right declaration but makes the user interpret adjacent options; a mis-declared
+`phase:` silently reweights ranking for every later run. Presentation only — the declaration, its
+values, and its authority are unchanged.
+
+**P9.1 — Sharpen the adjacent phase descriptions.** `hardening` and `released` must be
+distinguishable at a glance: contrast *"still shipping improvements toward the next release"*
+against *"maintenance mode — minimal new features."* All four descriptions stay generic (P8.1
+governs the wording).
+
+**P9.2 — Show a non-binding `Suggested:` phase when cheap signals imply one.** Deterministic,
+read-only signals — an existing release/tag, a published-package manifest, semantic versioning —
+may produce a *"Suggested: hardening"* line above the choices. Rules:
+
+- The suggestion never pre-answers; the user always chooses, and no suggestion line renders when
+  signals are absent or conflicting.
+- **Content-repo fallback** (consistency with
+  [content-repo-scoping](content-repo-scoping.md) P1): the named signals are code-repo-shaped; on
+  a repo with no import substrate they are expected to be absent, and the step renders without a
+  suggestion rather than inferring from weaker evidence. An operational target declared in
+  STATE.md never feeds a phase suggestion — phase is the human's judgment about maturity, not a
+  derivable fact.
+
 ## Non-goals
 
 - No change to cadence, budgets, member order, brief assembly, or the ledger.
@@ -276,3 +307,7 @@ narrates by example.
 11. The `/nightwatch init` interview describes every prompt — the phase step in particular — in
     generic, repository-agnostic terms about the repository being configured, and never references
     Nightwatch's own epics, packaging, versions, or milestones (P8).
+12. *(P9, proposed)* The phase step's `hardening`/`released` descriptions are distinguishable
+    without re-reading; when release/package/semver signals exist a single non-binding
+    `Suggested:` line renders above the choices, and on a no-import-substrate repo with no such
+    signals the step renders with no suggestion at all.
