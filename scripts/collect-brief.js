@@ -23,7 +23,7 @@ const MEMBER_JOBS = ['repo-reconcile', 'arch-review', 'release-progress'];
 // Priority classes (lower rank = higher priority). Setup floats near the top so a fresh,
 // unconfigured repo surfaces its declarations first (spec acceptance).
 function classify(f) {
-  if (f.severity === 1 || f.kind === 'blocker') return { rank: 0, label: 'blocker' };
+  if (f.kind === 'blocker') return { rank: 0, label: 'blocker' };   // FR91: blocker keys on kind, never severity
   if (f.kind === 'setup') return { rank: 1, label: 'setup' };
   if (f.action === 'human-decision' || f.kind === 'decision') return { rank: 2, label: 'decision' };
   if (f.kind === 'drift') return { rank: 3, label: 'drift' };
@@ -150,23 +150,39 @@ function readReleaseHeader(root, config) {
 // (spec §6, FR56). Derived purely from counts, so it is byte-deterministic. Tier order: blockers →
 // decisions → quiet-with-a-waiting-clause → nothing. A crashed or timed-out member is named in the
 // status line itself (not only in Machine notes) so a failed night can't hide below the fold.
-function deriveStatusLine(shown, runStatus) {
+// `road` = { showsBlockerLine, hasBlockers }: whether the road renders a "Blocking the release:"
+// line (only when milestones are declared) and whether that line names any blocker. Returns
+// { line, note }: the status line, plus one optional Machine-notes line when the FR91 sanity
+// check fires. Blocker counting keys on the kind-based class (classify, FR91).
+function deriveStatusLine(shown, runStatus, road) {
   const failed = (runStatus.jobs || []).filter((j) => j.status === 'crashed' || j.status === 'timeout');
   const failSuffix = failed.length
     ? ` — ${failed.length === 1 ? `${failed[0].job} ${failed[0].status}` : `${failed.length} jobs failed`}, see Machine notes.`
     : '';
-  const blockers = shown.filter((f) => f._cls.label === 'blocker').length;
+  const rawBlockers = shown.filter((f) => f._cls.label === 'blocker').length;
   const decisions = shown.filter((f) => f._cls.label === 'decision').length;
-  if (blockers) return `**${blockers} release blocker${blockers > 1 ? 's' : ''}.** Start below.${failSuffix}`;
-  if (decisions) return `**${decisions} decision${decisions > 1 ? 's' : ''} ${decisions > 1 ? 'need' : 'needs'} you.** Nothing else is blocking.${failSuffix}`;
-  if (shown.length) {
+  // FR91 sanity check: the headline and the road derive from the same night. If the headline would
+  // claim blockers while the road actively renders "Blocking the release: nothing", that is a data
+  // disagreement (0030) — degrade to the decisions/quiet tier and record one Machine-notes line
+  // rather than raise a false alarm. Only fires when the road shows the line (milestones declared);
+  // a no-milestones brief renders no blocker line, so there is nothing to disagree with.
+  let blockers = rawBlockers;
+  let note = null;
+  if (rawBlockers && road && road.showsBlockerLine && !road.hasBlockers) {
+    note = `status line: ${rawBlockers} finding${rawBlockers > 1 ? 's' : ''} classed blocker, but the road lists no release blockers — headline shown as decisions/quiet, not "release blocker" (FR91).`;
+    blockers = 0;
+  }
+  let line;
+  if (blockers) line = `**${blockers} release blocker${blockers > 1 ? 's' : ''}.** Start below.${failSuffix}`;
+  else if (decisions) line = `**${decisions} decision${decisions > 1 ? 's' : ''} ${decisions > 1 ? 'need' : 'needs'} you.** Nothing else is blocking.${failSuffix}`;
+  else if (shown.length) {
     const fixes = shown.filter((f) => f.action === 'patch-available').length;
     const clause = fixes
       ? `${fixes === 1 ? 'One ready-made fix is' : `${fixes} ready-made fixes are`} waiting for you.`
       : `${shown.length} thing${shown.length > 1 ? 's' : ''} waiting below.`;
-    return `**Quiet night.** Nothing is blocking, no decisions needed. ${clause}${failSuffix}`;
-  }
-  return `**Quiet night.** Nothing needs you today.${failSuffix}`;
+    line = `**Quiet night.** Nothing is blocking, no decisions needed. ${clause}${failSuffix}`;
+  } else line = `**Quiet night.** Nothing needs you today.${failSuffix}`;
+  return { line, note };
 }
 
 // The "Where you stand" release-position block (spec §6, brief-composition P6): the progress toward
@@ -404,8 +420,18 @@ function collect(root, date, { force = false } = {}) {
   const L = [];
   L.push(`# Nightwatch — ${date}`, '');
 
+  // Release position — read once; the road renders it below, and the status-line sanity check
+  // (FR91) reads whether the road shows a blocker line and whether it names any blocker.
+  const rel = readReleaseHeader(root, config);
+  const ratio = releaseRatio(store);
+  const road = {
+    showsBlockerLine: !!(release && Array.isArray(release.milestones) && release.milestones.length),
+    hasBlockers: !!(ratio && ratio.blockers && ratio.blockers.length),
+  };
+
   // Status line — one bold sentence answering "is anything on fire?" before anything else.
-  L.push(deriveStatusLine(shown, runStatus), '');
+  const status = deriveStatusLine(shown, runStatus, road);
+  L.push(status.line, '');
 
   // Roadmap-first order (spec brief-roadmap-composition P1, Story 10.5): orient before triage —
   // Since yesterday and The road to release both land ABOVE the fold, before the single First action.
@@ -417,8 +443,7 @@ function collect(root, date, { force = false } = {}) {
 
   // ## The road to release — what's the goal, where am I, what's next? The declared journey, or the
   // fallback matrix (no tracker → hint; tracker but no milestones → the flat ratio + a nudge).
-  const rel = readReleaseHeader(root, config);
-  const ratio = releaseRatio(store);
+  // `rel`/`ratio` were read once above (the status-line sanity check shares them).
   L.push('## The road to release');
   renderRoadToRelease(release, rel, ratio, (crit) => doneTitles.has(crit), L);
   L.push('');
@@ -456,6 +481,7 @@ function collect(root, date, { force = false } = {}) {
   // candidates, zero-finding member jobs, config drift, and the scope line.
   L.push('## Machine notes — nothing to act on');
   const notes = [];
+  if (status.note) notes.push(`- ${status.note}`);   // FR91 status-line/road disagreement
   for (const j of runStatus.jobs || []) if (j.status && j.status !== 'ok') notes.push(`- ${j.job}: **${j.status}**${j.note ? ' — ' + j.note : ''}`);
   for (const d of degradedNotices) notes.push(`- ${d.job}: degraded — ${d.note}`);
   const demotions = computeDemotions(root, store);

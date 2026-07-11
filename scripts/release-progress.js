@@ -249,7 +249,7 @@ function releaseProgress(root, opts = {}) {
     }
   }
   for (const f of foreign) {
-    if (f.severity === 1 || f.kind === 'blocker') {
+    if (f.kind === 'blocker') {   // FR91: promote to Release blockers by kind, never by severity endpoint
       const key = 'release:blocker:' + f.id;
       const id = itemId(key);
       machineIds.add(id);

@@ -50,8 +50,9 @@ before running anything, and call the result `${NW_ROOT}` for the rest of this f
    - Check off items whose evidence now exists, recording the evidence link (`path:line` or `spec §`).
    - Add newly discovered items with stable ids (`RP-xxxx`).
    - Promote `human-decision` findings (from tonight's other jobs) into **Human decisions needed**
-     and severity-1 findings into **Release blockers**, cross-referenced by finding id so they
-     clear automatically when the source finding clears.
+     and `blocker`-kind findings into **Release blockers** (keyed on `kind`, never on the severity
+     endpoint — spec §2.5, FR91), cross-referenced by finding id so they clear automatically when
+     the source finding clears.
 
 4. **Never delete an item you did not create.** A human-added item that looks obsolete gets
    tagged `(stale? — confirm)`, never removed. The **Notes** section and all human-authored item

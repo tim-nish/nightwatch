@@ -7,6 +7,7 @@ const assert = require('assert');
 const { tmpRepo, write, readFile, gitInit, commit, git } = require('./helpers');
 const { collect } = require('../scripts/collect-brief');
 const { openTracker } = require('../scripts/lib/tracker');
+const { writeFindings } = require('../scripts/lib/findings');
 
 const STATE_WITH_MILESTONES = '# s\n```yaml\nrelease:\n  target: "First release"\n  definition_of_done:\n    - "docs done"\n    - "tests green"\n  milestones:\n    - name: "Docs complete"\n      criteria: ["docs done"]\n    - name: "Tests green"\n      criteria: ["tests green"]\n```\n';
 
@@ -47,6 +48,25 @@ module.exports = {
     assert.match(road, /waivable gate/, 'waivable hygiene gate labelled');
     assert.match(road, /🏁 Tag the release\./, '🏁 line');
     assert.match(road, /\*\*Blocking the release:\*\* nothing/, 'blocking line');
+  },
+
+  // FR91 — status-line/road sanity check: a blocker-kind finding is shown, but nothing was
+  // promoted to the road's blocker line (the 0030 disagreement). The headline must NOT claim a
+  // release blocker; it degrades to the decisions/quiet tier and records one Machine-notes line.
+  'brief: FR91 headline blockers but the road lists none → degrade + one Machine-notes line': () => {
+    const r = tmpRepo();
+    gitInit(r); write(r, 'a.js', '1\n'); commit(r, 'state');
+    write(r, '.nightwatch/STATE.md', STATE_WITH_MILESTONES); // road renders the "Blocking the release:" line
+    writeFindings(r, 'repo-reconcile', '2026-07-10', [], [
+      { id: 'RC-b', kind: 'blocker', severity: 1, title: 'phantom blocker', evidence: [], action: 'none', verified: true },
+    ]);
+    collect(r, '2026-07-10');
+    const brief = readFile(r, '.nightwatch/MORNING.md');
+    assert.ok(!/release blocker/.test(brief.split('\n')[2]), 'headline does not claim a release blocker');
+    const road = brief.split('## The road to release')[1].split('## ▶ First action')[0];
+    assert.match(road, /\*\*Blocking the release:\*\* nothing/, 'road still says nothing blocking');
+    const machine = brief.split('## Machine notes')[1];
+    assert.match(machine, /classed blocker, but the road lists no release blockers.*FR91/, 'disagreement recorded once in Machine notes');
   },
 
   // ---- fallback matrix (spec P3) ------------------------------------------------------------
