@@ -9,11 +9,11 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const { parseArgs, guardCli, repoRoot, todayISO, nwDir, outDir, outReadPath, ensureDir, readFileSafe, readJSONSafe, exists, progressPercent, git } = require('./lib/util');
-const { readAllFindings } = require('./lib/findings');
+const { readAllFindings, appendLedger } = require('./lib/findings');
 const { openTracker, releaseReadPath } = require('./lib/tracker');
 const { classifyOpenFindings, newClassificationRows, floorClassifier, runOrdinal, gcPatches, lifecycleCounts } = require('./lib/lifecycle');
 const { loadConfig } = require('./lib/config');
-const { excludedTopDirs, unclassifiedTopDirs } = require('./lib/scope');
+const { excludedTopDirs, unclassifiedTopDirs, detectRepoClass, productByDefaultDirs } = require('./lib/scope');
 const { commitPolicyProbe, layoutUpgradeNudge } = require('./lib/probe');
 const { isClean, checkCitations } = require('./lib/lints');
 const { deriveJourney } = require('./lib/milestones');
@@ -522,12 +522,26 @@ function collect(root, date, { force = false } = {}) {
   for (const doc of docs) if (!shownJobs.has(doc.job) && !(doc.findings || []).some(briefEligible)) {
     notes.push(`- ${doc.job}: 0 verified findings.`);
   }
-  // Config drift (FR53): name each new top-level directory no declaration classifies (neither
-  // product-declared, nor in ignore/dev_tooling) and point at `init --update`. Detection + reporting
-  // only — the overnight run writes no declarations; the lines are byte-deterministic (sorted).
-  const driftDirs = unclassifiedTopDirs(root, config, { authority });
-  for (const d of driftDirs) {
-    notes.push(`- new top-level directory \`${d}/\` is unclassified; run \`/nightwatch init --update\` or add it to \`.nightwatch/config.yaml\`.`);
+  // Config drift / product-by-default (FR53, FR100): substrate-aware. A CODE-class repo nudges a
+  // tracked top dir no declaration classifies toward `init --update`. A CONTENT-class repo has no
+  // "unclassified" vocabulary — tracked content is product by default; a NEW product dir gets exactly
+  // one "analyzed as product (default)" notice, deduped against the ledger's seen set so it never
+  // repeats. An orphan lockfile (no matching manifest) is stated once — it is why the repo is content.
+  const rc = detectRepoClass(root);
+  for (const lock of rc.orphanLockfiles || []) {
+    notes.push(`- \`${lock}\` present without its manifest — not an import substrate; the repo is analyzed as content.`);
+  }
+  let newProductDirs = [];
+  if (rc.klass === 'content') {
+    const seenDirs = new Set(ledgerBefore.filter((r) => r && r.type === 'product-dir').map((r) => r.dir));
+    newProductDirs = productByDefaultDirs(root, config, { klass: 'content' }).filter((d) => !seenDirs.has(d));
+    for (const d of newProductDirs) {
+      notes.push(`- new top-level directory \`${d}/\` analyzed as product (default — no import substrate); declare it in \`dev_tooling\`/\`ignore\` to exclude.`);
+    }
+  } else {
+    for (const d of unclassifiedTopDirs(root, config, { authority, klass: 'code' })) {
+      notes.push(`- new top-level directory \`${d}/\` is unclassified; run \`/nightwatch init --update\` or add it to \`.nightwatch/config.yaml\`.`);
+    }
   }
   // Collected staged patches (spec finding-lifecycle P5): one line naming the patch files GC'd
   // because their finding is resolved or dismissed. Byte-deterministic (gcPatches returns sorted).
@@ -564,6 +578,11 @@ function collect(root, date, { force = false } = {}) {
   // Scope statement (FR42): name the excluded top-level trees so a wrong scope is visible, never
   // silent. `ignore` (never look) and `dev_tooling` (not the product) are unioned.
   const excluded = excludedTopDirs(root, config);
+  // Repo-class line (FR100): a no-substrate repo states that its tracked content is product by
+  // default, so a reader knows the product was not swallowed by an inverted heuristic.
+  notes.push(rc.klass === 'content'
+    ? '- Repo class: content (no import substrate) — tracked content is analyzed as product by default; only convention dirs are excluded.'
+    : '- Repo class: code (import substrate detected).');
   notes.push(excluded.length
     ? `- Scope: excluded ${excluded.join(', ')} (ignore + dev_tooling) — edit \`.nightwatch/config.yaml\` to change.`
     : '- Scope: no top-level directories excluded — edit `.nightwatch/config.yaml` to change.');
@@ -615,6 +634,9 @@ function collect(root, date, { force = false } = {}) {
     // Record the commit-policy probe finding (P3) with its stable id so it dedupes/recurs like any
     // finding — the probe re-detects it each night, but the ledger counts one recurring finding.
     if (probeFinding) store.recordFindings([probeFinding], { date, job: 'nightwatch' });
+    // Product-by-default seen set (FR100): record each newly-noticed content-repo product dir so the
+    // "analyzed as product (default)" notice fires exactly once and never repeats.
+    if (newProductDirs.length) appendLedger(root, newProductDirs.map((d) => ({ type: 'product-dir', dir: d, date })));
     store.recordRun({ date, job: 'collect-brief', shown: shown.length, total: all.length, cap, ...runMeta });
     // Per-run classification of the carried-forward open set (spec P1/P2): an id tonight's docs
     // re-surfaced is `re-observed` (its finding row already dedupes); every other open finding runs
