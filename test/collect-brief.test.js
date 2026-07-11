@@ -55,8 +55,8 @@ module.exports = {
     assert.ok(fold > 0, 'fold marker present');
     const above = brief.slice(0, fold), below = brief.slice(fold);
     // Above the fold: status line, the one First action, the release position — in order.
-    const pos = ['**Quiet night.', '## ▶ First action', '## If you have energy after that', '## Where you stand'].map((h) => above.indexOf(h));
-    assert.ok(pos.every((i) => i >= 0), 'status + the three above-fold sections present above the fold');
+    const pos = ['**Quiet night.', '## Since yesterday', '## The road to release', '## ▶ First action', '## If you have energy after that'].map((h) => above.indexOf(h));
+    assert.ok(pos.every((i) => i >= 0), 'status + the roadmap-first above-fold sections present above the fold');
     for (let i = 1; i < pos.length; i++) assert.ok(pos[i] > pos[i - 1], `above-fold section ${i} in order`);
     // Below the fold: Details, human-visible ids, and the degraded notice.
     assert.ok(below.includes('## Details') && below.includes('`RE-drift0`'), 'evidence/ids below the fold');
@@ -113,7 +113,7 @@ module.exports = {
     const firstBlock = brief.split('## ▶ First action')[1].split('## If you have energy')[0];
     assert.ok(/Fast fix/.test(firstBlock) && !/Slow fix/.test(firstBlock), 'lowest effort is the first action');
     // Absent-effort finding sorts after both estimated ones in the remainder list.
-    const rest = brief.split('## If you have energy after that')[1].split('## Where you stand')[0];
+    const rest = brief.split('## If you have energy after that')[1].split('\n---')[0];
     assert.ok(rest.indexOf('Slow fix') < rest.indexOf('No estimate'), 'absent effort sorts last');
   },
 
@@ -167,7 +167,7 @@ module.exports = {
     ].join('\n'));
     collect(r, date);
     const brief = readFile(r, '.nightwatch/MORNING.md');
-    const stand = brief.split('## Where you stand')[1].split('\n---')[0];
+    const stand = brief.split('## The road to release')[1].split('## ▶ First action')[0];
     assert.match(stand, /\*\*67%\*\* \(2\/3 criteria\) toward v0\.1 public release \(phase: hardening\)/, 'pct + ratio + target + phase');
     assert.match(stand, /Full tracker: `\.nightwatch\/RELEASE\.md`/, 'tracker pointer present');
     assert.match(stand, /Remaining: CI runs the test suite\./, 'remaining open criterion title listed');
@@ -194,7 +194,7 @@ module.exports = {
     ].join('\n'));
     collect(r, date);
     const brief = readFile(r, '.nightwatch/MORNING.md');
-    const stand = brief.split('## Where you stand')[1].split('\n---')[0];
+    const stand = brief.split('## The road to release')[1].split('## ▶ First action')[0];
     assert.match(stand, /\*\*50%\*\* toward v0\.1/, 'coarse percentage still shown');
     assert.ok(!/criteria\)/.test(stand), 'no ratio rendered when nothing is tracked');
     assert.ok(!/0\/0/.test(brief), 'never renders 0/0');
@@ -328,9 +328,10 @@ module.exports = {
     collect(r, date);
     const brief = readFile(r, '.nightwatch/MORNING.md');
     const order = [
+      '## Since yesterday',
+      '## The road to release',
       '## ▶ First action',
       '## If you have energy after that',
-      '## Where you stand',
       '## Details',
       '**Appendix (overflow — ids only):**',
       '## Machine notes — nothing to act on',
