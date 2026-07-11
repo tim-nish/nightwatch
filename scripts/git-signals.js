@@ -22,13 +22,17 @@ function gitSignals(root, { window = 400, ignoreGlobs = [], couplingMinCommits =
   if (total < 20) degraded.push(`shallow history (${total} commits) — coupling checks skipped`);
 
   const ignore = makeIgnore(ignoreGlobs);
+  // Placeholder / VCS-metadata files churn in history but represent no design surface (FR104):
+  // a `.gitkeep` touched every commit would masquerade as the top hotspot. Exclude them from
+  // churn, hotspots, and coupling.
+  const isPlaceholder = (f) => /(?:^|\/)\.(?:gitkeep|gitignore|gitattributes|gitmodules)$/.test(f);
   // Per-commit file lists: `--name-only` with a record separator we can split on.
   const raw = git(root, ['log', `-n${window}`, '--no-merges', '--name-only', '--pretty=format:%x1ecommit%x1e']);
   const churn = new Map(); // file -> commits touching it
   const commits = []; // arrays of files per commit
   if (raw != null) {
     for (const block of raw.split('\x1ecommit\x1e')) {
-      const files = block.split('\n').map((s) => s.trim()).filter((s) => s && !ignore(s));
+      const files = block.split('\n').map((s) => s.trim()).filter((s) => s && !ignore(s) && !isPlaceholder(s));
       if (!files.length) continue;
       commits.push(files);
       for (const f of files) churn.set(f, (churn.get(f) || 0) + 1);
@@ -60,6 +64,15 @@ function gitSignals(root, { window = 400, ignoreGlobs = [], couplingMinCommits =
       coupling.push({ a, b, commits: count, module_a: topSegment(a), module_b: topSegment(b) });
     }
     coupling.sort((x, y) => y.commits - x.commits || x.a.localeCompare(y.a));
+  }
+
+  // Unreachable-threshold honesty (FR104): a pair can co-change at most min(churn_a, churn_b)
+  // times, so if the coupling threshold exceeds the single highest per-file churn, no pair can
+  // ever reach it — the signal is provably dead on this history. State both numbers; never
+  // auto-tune the threshold (config owns it — this is reporting only).
+  const maxChurn = churnArr.length ? churnArr[0].count : 0;
+  if (total >= 20 && couplingMinCommits > maxChurn) {
+    degraded.push(`co-change coupling: threshold ${couplingMinCommits} exceeds max observed churn ${maxChurn} — signal unreachable on this history`);
   }
 
   return { degraded, commits_scanned: commits.length, churn: churnArr, hotspots, coupling };

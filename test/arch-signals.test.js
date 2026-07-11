@@ -50,6 +50,31 @@ module.exports = {
     assert.ok(sig.degraded.some((d) => /layering/.test(d) && /not-configured/.test(d)));
   },
 
+  // Story 12.6 / FR104 — honest emptiness: a vacuous class reads as degradation, not clean.
+  'arch: no-substrate repo → duplication/import-overlap/speculation each vacuous + all_vacuous (FR104)': () => {
+    const r = tmpRepo();
+    write(r, 'docs/a.md', '# just markdown');
+    write(r, 'docs/b.md', '# more markdown');
+    const sig = archSignals(r);
+    assert.strictEqual(sig.speculation.length, 0);
+    assert.strictEqual(sig.duplication.length, 0);
+    assert.strictEqual(sig.import_overlap.length, 0);
+    assert.ok(sig.degraded.some((d) => /^speculation:.*vacuous/.test(d)), 'speculation named vacuous');
+    assert.ok(sig.degraded.some((d) => /^duplication:.*vacuous/.test(d)), 'duplication named vacuous');
+    assert.ok(sig.degraded.some((d) => /^import-overlap:.*vacuous/.test(d)), 'import-overlap named vacuous');
+    assert.strictEqual(sig.all_vacuous, true, 'all classes vacuous → flagged');
+    assert.ok(sig.degraded.some((d) => /all architecture signal classes are vacuous/.test(d)), 'summary line present');
+  },
+
+  'arch: code substrate present → not all_vacuous, no spurious duplication-vacuous line (FR104)': () => {
+    const r = tmpRepo();
+    write(r, 'core/x.js', 'function processData() {}');
+    write(r, 'api/y.js', 'function processData() {}');
+    const sig = archSignals(r);
+    assert.notStrictEqual(sig.all_vacuous, true, 'a repo with code is never all-vacuous');
+    assert.ok(!sig.degraded.some((d) => /^duplication:.*vacuous/.test(d)), 'duplication has substrate → not vacuous');
+  },
+
   'arch: deterministic — signals identical across runs': () => {
     const r = tmpRepo();
     write(r, 'core/a.ts', 'export interface Foo {}');

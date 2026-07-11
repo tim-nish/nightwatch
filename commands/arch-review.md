@@ -82,6 +82,14 @@ deliberately does not do:
    overengineering/speculation; `phase: hardening|released` lifts drift and coupling; no phase →
    neutral) and the **cap + appendix** split: the top `caps.arch_candidates` (default 7) verified
    candidates are the brief; the rest are listed in the appendix **by id only**.
+6. **Zero-candidate path (normative):** when the scaffolding assembles no candidates and
+   `arch-signals` reports every class vacuous (the findings doc carries `all_vacuous: true` /
+   `zero_candidate: true`, e.g. a no-substrate markdown repo where duplication, import-overlap and
+   speculation are each vacuous rather than clean), **do not run the adversarial refute pass over
+   an empty set and do not manufacture candidates**. The scaffolding has already written the empty
+   findings doc with the per-class vacuous notices and the single summary degraded line; your only
+   job is to **stop**. Silence here is the honest result — a vacuous class is "nothing to check",
+   reported as degradation, never a clean pass.
 
 ## Output
 
@@ -104,4 +112,7 @@ and nothing is ever written outside `.nightwatch/` (NFR3).
 - No overnight follow-up implementation — executing a simplification is a daytime session.
 - Unparsable source is reported and skipped, never "fixed".
 - Failure handling: no extractor → git-only signals + `degraded`; shallow history (<20 commits) →
-  co-change skipped with notice; budget exhausted → partial output labeled partial.
+  co-change skipped with notice; a coupling threshold above the highest observed churn → the pair
+  can never reach it, stated once as unreachable (never auto-tuned); an empty signal class without
+  substrate → reported as vacuous, never a clean pass; every class vacuous → the zero-candidate
+  path above; budget exhausted → partial output labeled partial.
