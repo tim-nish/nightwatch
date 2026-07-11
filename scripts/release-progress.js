@@ -19,6 +19,7 @@ const { loadConfig } = require('./lib/config');
 const { releaseChecks } = require('./release-checks');
 const { openTracker, itemId, releaseReadPath } = require('./lib/tracker');
 const { makeFinding, SCHEMA_VERSION, readFindings } = require('./lib/findings');
+const { milestoneFindings } = require('./lib/milestones');
 
 // The header note stamped when there is no declared `release:` block — a coarse, honest signal
 // that "done" is only generic hygiene until a human declares a real definition of done in STATE.md.
@@ -351,7 +352,10 @@ function releaseProgress(root, opts = {}) {
   store.flush();
 
   const brief = buildBrief({ progress, prevProgress, target, newBlockers, newDecisions, next: top, noChange: !material });
-  const findings = [briefFinding(brief), ...(store.setupFindings || [])];
+  // Milestone declaration validation (spec release-journey P1): one setup finding per dangling
+  // criterion / unreferenced DoD item, or a single nudge to declare `milestones:` when absent.
+  // Declared-not-inferred — the road is the maintainer's judgment.
+  const findings = [briefFinding(brief), ...(store.setupFindings || []), ...milestoneFindings(release)];
   return { wrote: true, noChange: !material, date, progress, prevProgress, delta, notice, brief, findings, degraded };
 }
 

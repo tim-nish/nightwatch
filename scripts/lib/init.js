@@ -20,6 +20,7 @@ const yaml = require('js-yaml');
 const { exists, readFileSafe, ensureDir, git, makeIgnore, walkFiles } = require('./util');
 const { DEFAULT_DEV_TOOLING, analysisExcludeGlobs } = require('./scope');
 const { loadConfig } = require('./config');
+const { draftMilestones } = require('./milestones');
 const { loadAdapters } = require('../extract-signals');
 
 // Top-level directories that are almost always product surface, so init never proposes them as
@@ -463,7 +464,7 @@ function authorityTopSegments(authority) {
  *     as product, or add to dev_tooling/ignore).
  * Idempotent: a repo unchanged since the last init/update proposes nothing.
  * @param {string} root @param {{ config?: any, gitFn?: any }} [opts]
- * @returns {{ proposals: { id:string, kind:string, dir:string, glob?:string, summary:string }[] }}
+ * @returns {{ proposals: { id:string, kind:string, dir?:string, glob?:string, block?:string, summary:string }[] }}
  */
 function planUpdate(root, opts = {}) {
   const lc = loadConfig(root);
@@ -487,6 +488,14 @@ function planUpdate(root, opts = {}) {
     if (PRODUCT_DIR_ALLOWLIST.has(dir)) continue;
     if (authTops.has(dir)) continue;
     proposals.push({ id: `module:${dir}`, kind: 'module', dir, summary: `new top-level \`${dir}/\` is unclassified — declare it as product (authority) or add it to dev_tooling/ignore` });
+  }
+  // Milestone declaration draft (spec release-journey P1): a `release:` block with a definition of
+  // done but no `milestones:` → offer to draft an ordered milestones block from the DoD list. The
+  // road stays the maintainer's judgment; the draft is applied only on confirmation.
+  const hasMilestones = lc.release && Array.isArray(lc.release.milestones) && lc.release.milestones.length > 0;
+  const draft = draftMilestones(lc.release);
+  if (draft && !hasMilestones) {
+    proposals.push({ id: 'milestones:draft', kind: 'milestones', block: draft, summary: 'draft an ordered `milestones:` block from your definition of done (declares the release road)' });
   }
   return { proposals: proposals.sort((a, b) => a.id.localeCompare(b.id)) };
 }
@@ -540,6 +549,39 @@ function setDeclarationField(root, fileRel, key, value) {
  * @param {{ devTooling?: string[], fields?: { file:string, key:string, value:string }[] }} confirmed
  * @returns {{ dev_tooling: any, fields: any[] }}
  */
+/**
+ * Insert a drafted `milestones:` block under STATE.md's `release:` key (spec release-journey P1),
+ * byte-preserving every other line. Idempotent: a repo that already declares `milestones:` under
+ * release is left untouched. The draft (from milestones.draftMilestones, at 0-indent) is re-indented
+ * to release's child level and inserted at the end of the release sub-block, inside the yaml fence.
+ * Returns `{ changed, reason? }`.
+ * @param {string} root @param {string} block  the draft block ("milestones:\n  - name: …")
+ */
+function applyMilestonesDraft(root, block) {
+  const rel = exists(path.join(root, '.nightwatch', 'STATE.md')) ? '.nightwatch/STATE.md' : 'STATE.md';
+  const abs = path.join(root, ...rel.split('/'));
+  const text = readFileSafe(abs);
+  if (text == null) return { changed: false, reason: 'file-absent' };
+  const lines = text.split('\n');
+  const open = lines.findIndex((l) => /^```ya?ml\s*$/i.test(l));
+  if (open === -1) return { changed: false, reason: 'no-yaml-block' };
+  const close = lines.findIndex((l, i) => i > open && /^```\s*$/.test(l));
+  const fenceEnd = close === -1 ? lines.length : close;
+  const relIdx = lines.findIndex((l, i) => i > open && i < fenceEnd && /^release:\s*$/.test(l));
+  if (relIdx === -1) return { changed: false, reason: 'no-release-block' };
+  // The release sub-block ends at the next line indented to column 0 (a new top-level key), else the fence.
+  let end = fenceEnd;
+  for (let i = relIdx + 1; i < fenceEnd; i++) {
+    if (lines[i].trim() === '') continue;
+    if (/^\S/.test(lines[i])) { end = i; break; }
+    if (/^\s+milestones:\s*$/.test(lines[i])) return { changed: false, reason: 'already-declared' };
+  }
+  const indented = block.replace(/\n$/, '').split('\n').map((l) => (l === '' ? '' : '  ' + l));
+  lines.splice(end, 0, ...indented);
+  fs.writeFileSync(abs, lines.join('\n'));
+  return { changed: true };
+}
+
 function applyUpdate(root, confirmed = {}) {
   let devToolingResult = null;
   const adds = (confirmed.devTooling || []).map(toGlob).filter(Boolean);
@@ -551,7 +593,9 @@ function applyUpdate(root, confirmed = {}) {
   for (const f of (confirmed.fields || [])) {
     fields.push({ ...f, result: setDeclarationField(root, f.file, f.key, f.value) });
   }
-  return { dev_tooling: devToolingResult, fields };
+  // Confirmed milestones draft (spec release-journey P1): insert the block under STATE.md's release:.
+  const milestones = confirmed.milestones ? applyMilestonesDraft(root, confirmed.milestones) : null;
+  return { dev_tooling: devToolingResult, fields, milestones };
 }
 
 /**
@@ -585,5 +629,5 @@ module.exports = {
   runInit, writeDeclarations, writeReadme, ensureGitignore, probeAdapters, readTemplate, TEMPLATES_DIR,
   detectDevToolingCandidates, writeDevTooling, trackedTopDirs, planMigration, applyMigration,
   planRuntimeMigration, rewriteNestedGitignoreForRuntime,
-  planUpdate, applyUpdate, setDeclarationField, currentUserDevTooling,
+  planUpdate, applyUpdate, applyMilestonesDraft, setDeclarationField, currentUserDevTooling,
 };
