@@ -13,7 +13,7 @@
 // scheduled tonight"; idempotency (a separate gate, keyed on state.json + the dated brief) answers
 // "did we already do tonight's run" — a second same-night invocation is a no-op unless `--force`.
 const path = require('path');
-const { nwDir, runtimeDir, readJSONSafe, writeJSON, exists } = require('./util');
+const { nwDir, runtimeDir, readJSONSafe, writeJSON } = require('./util');
 
 /** @typedef {import('./types').Config} Config */
 /** @typedef {import('./types').NightwatchState} NightwatchState */
@@ -168,15 +168,18 @@ function planRun({ state, config, date, force = false }) {
 }
 
 /**
- * Has tonight's run already completed? The idempotency sentinel is state.json's
- * `last_brief_date` plus the dated brief on disk — either one being `date` means a full run
- * happened tonight (§6), so a re-invocation without `--force` must no-op.
+ * Has tonight's run already completed? The idempotency sentinel is the cursor state's
+ * `last_brief_date` **only** — never the dated brief on disk (FR92). The state-advancing
+ * scheduler call (§6, step 6) runs *after* brief assembly has written tonight's brief, so a
+ * brief-file check would make that very call no-op and the cadence cursors would never be
+ * written. `last_brief_date` is stamped by that same write step, so a genuine second same-night
+ * `/nightwatch` still no-ops (its `--plan` sees the stamped date) while step 6 of the first run
+ * proceeds. `root` is retained for call-site stability. A `--force` caller overrides regardless.
  * @param {NightwatchState | null} state @param {string} root @param {string} date
  * @returns {boolean}
  */
-function alreadyRanTonight(state, root, date) {
-  if (state && state.last_brief_date === date) return true;
-  return exists(path.join(nwDir(root), 'briefs', `${date}.md`));
+function alreadyRanTonight(state, root, date) {   // eslint-disable-line no-unused-vars
+  return !!(state && state.last_brief_date === date);
 }
 
 /**

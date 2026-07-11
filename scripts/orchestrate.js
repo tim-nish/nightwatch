@@ -97,8 +97,10 @@ function orchestrate(root, date, { force = false, planOnly = false, yes = false 
   // cursors, no ledger) still gates.
   const firstRun = onDisk == null && !exists(ledgerPath(root));
 
-  // 2. Idempotency gate. A completed run tonight (state.last_brief_date or the dated brief) means a
-  //    re-invocation must exit WITHOUT spending tokens or changing files — unless --force overrides.
+  // 2. Idempotency gate. A completed run tonight (state.last_brief_date — never the dated brief,
+  //    FR92) means a re-invocation must exit WITHOUT spending tokens or changing files, unless
+  //    --force overrides. Keying on the brief file would no-op step 6's own state-advance call
+  //    (the brief is written before it), leaving the cadence cursors unwritten.
   if (!force && alreadyRanTonight(onDisk, root, date)) {
     return { status: 'noop', reason: 'already-ran-tonight', due: [], skipped: [], steps: [] };
   }
