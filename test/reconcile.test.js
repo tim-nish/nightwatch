@@ -327,4 +327,81 @@ module.exports = {
     const res = reconcile(r);
     assert.strictEqual(res.findings.length, 0, 'no drift, authority declared → nothing to report');
   },
+
+  // ---- Story 11.6 / FR97 — the mechanical patch surface is delete-only ------------------------
+
+  'reconcile: additive drift on a derived README → human-decision with proposal, no patch (FR97)': () => {
+    const r = tmpRepo();
+    gitInit(r);
+    write(r, 'commands/ask.md', '# /ask\nAnswer a question from recall surfaces.\n');
+    write(r, 'commands/triage.md', '# /triage\nScore inbox ideas.\n');
+    // README documents triage but not ask — the 0034 fixture shape (commands missing from a derived doc).
+    write(r, 'README.md', '# Demo\n\nThe `triage` command scores ideas.\n');
+    write(r, 'STATE.md', AUTHORITY_STATE);
+    commit(r, 'init');
+    const res = reconcile(r);
+    const cov = res.findings.filter((f) => /does not document command/.test(f.title));
+    assert.strictEqual(cov.length, 1, 'exactly one coverage finding (ask); triage is mentioned');
+    const f = cov[0];
+    assert.match(f.title, /"ask"/, 'names the undocumented command');
+    assert.strictEqual(f.kind, 'drift');
+    assert.strictEqual(f.action, 'human-decision', 'additive drift is a human decision, never a patch');
+    assert.ok(typeof f.proposal === 'string' && /Document `ask`/.test(f.proposal) && /delete-only/.test(f.proposal),
+      'proposal content carried in the finding body');
+    assert.ok(f.verified, 'survives the (default) adversarial pass');
+    // No patch of any kind: additive drift must never produce a patch artifact.
+    assert.strictEqual(res.patchPath, null, 'no combined patch written');
+    assert.deepStrictEqual(res.patches, [], 'no per-finding patch files');
+    assert.ok(!f.patch_file, 'the coverage finding carries no patch_file pointer');
+  },
+
+  'reconcile: coverage check is word-boundary safe and silent when everything is documented (FR97)': () => {
+    const r = tmpRepo();
+    gitInit(r);
+    write(r, 'commands/ask.md', '# /ask\n');
+    // "task" must NOT count as a mention of "ask" — word-boundary check.
+    write(r, 'README.md', '# Demo\n\nA task list.\n');
+    write(r, 'STATE.md', AUTHORITY_STATE);
+    commit(r, 'init');
+    const res = reconcile(r);
+    assert.strictEqual(res.findings.filter((f) => /does not document command/.test(f.title)).length, 1,
+      '"task" is not a mention of "ask"');
+
+    const r2 = tmpRepo();
+    gitInit(r2);
+    write(r2, 'commands/ask.md', '# /ask\n');
+    write(r2, 'README.md', '# Demo\n\nUse `/ask` to query the gateway.\n');
+    write(r2, 'STATE.md', AUTHORITY_STATE);
+    commit(r2, 'init');
+    const res2 = reconcile(r2);
+    assert.strictEqual(res2.findings.filter((f) => /does not document command/.test(f.title)).length, 0,
+      'documented command → no coverage finding');
+  },
+
+  'reconcile: coverage drift fires only under a DERIVED usage declaration (FR97)': () => {
+    // Authoritative README: the doc leads, code follows — a missing command is not doc drift.
+    const r = tmpRepo();
+    gitInit(r);
+    write(r, 'commands/ask.md', '# /ask\n');
+    write(r, 'README.md', '# Demo\n\nNothing here.\n');
+    write(r, 'STATE.md', '# State\n\n```yaml\nauthority:\n  readme:\n    role: authoritative\n    artifact: README.md\n```\n');
+    commit(r, 'init');
+    assert.strictEqual(reconcile(r).findings.filter((f) => /does not document command/.test(f.title)).length, 0,
+      'authoritative README → no coverage findings');
+    // Undeclared authority (detection-only): the obligation is undeclared, so nothing fires.
+    const r2 = tmpRepo();
+    gitInit(r2);
+    write(r2, 'commands/ask.md', '# /ask\n');
+    write(r2, 'README.md', '# Demo\n\nNothing here.\n');
+    commit(r2, 'init');
+    assert.strictEqual(reconcile(r2).findings.filter((f) => /does not document command/.test(f.title)).length, 0,
+      'detection-only mode → no coverage findings');
+  },
+
+  'reconcile: the command doc states the delete-only patch contract (FR97)': () => {
+    const doc = fs.readFileSync(path.join(__dirname, '..', 'commands', 'repo-reconcile.md'), 'utf8');
+    assert.match(doc, /delete-only\s+by\s+design/, 'delete-only scope stated');
+    assert.match(doc, /additive\s+or\s+modifying\*{0,2}\s+drift/i, 'additive/modifying drift routing stated');
+    assert.match(doc, /no\s+patch file is ever written for an addition or modification/i, 'no-additive-patch rule stated');
+  },
 };
