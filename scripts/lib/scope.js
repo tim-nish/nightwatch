@@ -31,8 +31,19 @@ const DEFAULT_IGNORE = Object.freeze([
   'dist/**', 'build/**', 'out/**', 'vendor/**', 'node_modules/**',
   '.git/**', 'coverage/**', '**/*.lock', '.nightwatch/**',
 ]);
+// Each entry carries the criterion it passes (FR101): a recognizable dev-workspace convention with
+// a near-zero chance of being product surface. `q_a/**` was REMOVED — it is the Nightwatch/BMAD
+// authors' own workflow convention, not a universal one, and on the first outside repo (product-lab)
+// it excluded the largest PRODUCT directory (finding 0028). `.claude/**` stays excluded but ships a
+// `!.claude/commands/**` re-include so agent COMMANDS (behavior, the repo's implementation in a
+// Claude-Code-native repo) are analyzed while settings/caches/downloaded skills stay out (needs the
+// match-based subpath negation from Story 12.1).
 const DEFAULT_DEV_TOOLING = Object.freeze([
-  '_bmad/**', '_bmad-output/**', '.claude/**', '.cursor/**', 'q_a/**',
+  '_bmad/**',              // BMAD install tree — planning framework, not product
+  '_bmad-output/**',       // BMAD-generated planning artifacts (epics, stories)
+  '.claude/**',            // Claude Code workspace — settings, caches, downloaded skills
+  '!.claude/commands/**',  // …EXCEPT agent commands: behavior/implementation, analyzed as product
+  '.cursor/**',            // Cursor editor workspace
 ]);
 
 /**
