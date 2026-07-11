@@ -93,7 +93,7 @@ module.exports = {
     assert.ok(res2.progress > res1.progress, `progress increased ${res1.progress} -> ${res2.progress}`);
     const doc = readFile(r, '.nightwatch/RELEASE.md');
     assert.match(doc, /- \[x\] Ship a LICENSE file — evidence: LICENSE/, 'completed with closing evidence');
-    assert.match(doc, /2026-01-02 — completed: Ship a LICENSE file/, 'dated status line records completion');
+    assert.match(doc, /2026-01-02 — Done: Ship a LICENSE file/, 'dated status line records completion');
     const next = section(doc, 'Next actions (top 3)');
     assert.match(next, / → /, 'next actions point at a specific file/spec');
     assert.ok(res2.brief.length <= 12, 'brief is <= 12 lines');
@@ -108,10 +108,10 @@ module.exports = {
     write(r, 'LICENSE', 'MIT');
     releaseProgress(r, { date: '2026-05-02' });
     const doc = readFile(r, '.nightwatch/RELEASE.md');
-    const body = section(doc, 'Status update (latest first, capped at 10 entries)');
+    const body = section(doc, 'What changed lately (latest first, capped at 10 entries)');
     const count = (body.match(/^- \d{4}-\d{2}-\d{2} —/gm) || []).length;
     assert.ok(count <= 10, `capped at 10, got ${count}`);
-    assert.match(body, /2026-05-02 — completed/, 'newest completion retained');
+    assert.match(body, /2026-05-02 — Done/, 'newest completion retained');
   },
 
   // AC4 — human items + a Notes paragraph survive byte-identical; an obsolete human item is
@@ -149,7 +149,7 @@ module.exports = {
     const b = readFile(r, '.nightwatch/RELEASE.md');
     assert.ok(res.noChange, 'flagged as a no-change night');
     assert.notStrictEqual(a, b);
-    const bFixed = b.replace('updated: 2026-03-02', 'updated: 2026-03-01').replace('- 2026-03-02 — no change\n', '');
+    const bFixed = b.replace('updated: 2026-03-02', 'updated: 2026-03-01').replace('- 2026-03-02 — No forward movement; nothing needs you.\n', '');
     assert.strictEqual(bFixed, a, 'only updated: and one no-change status line changed');
     assert.ok(res.brief.length <= 12, 'brief <= 12 lines');
   },
@@ -207,7 +207,7 @@ module.exports = {
     const done = section(doc2, 'Done');
     assert.match(done, /- \[x\] Quickstart command errors \(RC-b10c1a\) — evidence: \.nightwatch\/out\/repo-reconcile-2026-06-02\.json/, 'cleared to Done with closing evidence');
     assert.strictEqual(nwIdOf(done, 'Quickstart command errors'), promotedId, 'promoted item id stable across the clear');
-    assert.match(doc2, /2026-06-02 — completed: Quickstart command errors \(RC-b10c1a\)/, 'dated status line records the clear');
+    assert.match(doc2, /2026-06-02 — Done: Quickstart command errors \(RC-b10c1a\)/, 'dated status line records the clear');
     // The human blocker is never auto-completed.
     assert.ok(doc2.includes(humanBlocker), 'human-added blocker survives the auto-clear untouched');
     assert.ok(!res2.noChange, 'clearing is a material change');
