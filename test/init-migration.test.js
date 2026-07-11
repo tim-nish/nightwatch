@@ -108,4 +108,38 @@ module.exports = {
     assert.ok(/^runtime\/$/m.test(readFile(root, '.nightwatch/.gitignore')), 'nested ignore written (runtime/)');
     assert.strictEqual(readFile(root, '.gitignore'), 'node_modules/\n.nightwatch/out/\n', 'root .gitignore byte-identical (legacy line left in place)');
   },
+
+  // ---- Story 9.5 — confirmed runtime-layout migration (spec runtime-layout P2) ---------------
+  'runtime-migration: confirmed init moves state.json → cursors.json and out/ → runtime/out/, byte-preserved': () => {
+    const root = tmpRepo();
+    gitInit(root);
+    write(root, '.nightwatch/state.json', '{"schema":1,"last_brief_date":"2026-07-09","jobs":{}}');
+    write(root, '.nightwatch/out/repo-reconcile-2026-07-09.json', '{"schema":1,"findings":[]}');
+    write(root, '.nightwatch/.gitignore', 'out/\n');
+    commit(root, 'legacy runtime layout');
+
+    const res = runInit(root, { migrate: true, adapters: [] });
+    const moved = Object.fromEntries((res.runtime_migration || []).map((m) => [m.key, m]));
+    assert.ok(moved.cursors && moved.cursors.moved, 'cursors moved');
+    // Content byte-preserved at the new runtime locations; legacy paths gone.
+    assert.strictEqual(readFile(root, '.nightwatch/runtime/cursors.json'), '{"schema":1,"last_brief_date":"2026-07-09","jobs":{}}');
+    assert.strictEqual(readFile(root, '.nightwatch/runtime/out/repo-reconcile-2026-07-09.json'), '{"schema":1,"findings":[]}');
+    assert.strictEqual(readFile(root, '.nightwatch/state.json'), null, 'legacy state.json gone');
+    assert.strictEqual(readFile(root, '.nightwatch/out/repo-reconcile-2026-07-09.json'), null, 'legacy out/ file gone');
+    // Nested .gitignore rewritten: runtime/ present, stale out/ dropped.
+    const gi = readFile(root, '.nightwatch/.gitignore');
+    assert.ok(/^runtime\/$/m.test(gi), 'runtime/ ignored');
+    assert.ok(!/^out\/$/m.test(gi), 'stale bare out/ line dropped by the migration');
+  },
+
+  'runtime-migration: re-running the confirmed migration is idempotent (nothing left to move)': () => {
+    const root = tmpRepo();
+    gitInit(root);
+    write(root, '.nightwatch/state.json', '{"schema":1,"jobs":{}}');
+    commit(root, 'legacy');
+    runInit(root, { migrate: true, adapters: [] });
+    const again = runInit(root, { migrate: true, adapters: [] });
+    assert.deepStrictEqual(again.runtime_migration, [], 'a migrated repo proposes/moves nothing');
+    assert.ok(readFile(root, '.nightwatch/runtime/cursors.json') != null, 'cursors still present after re-run');
+  },
 };

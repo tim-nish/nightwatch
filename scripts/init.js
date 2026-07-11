@@ -27,7 +27,7 @@
 //                      APPLY the confirmed dev-tooling additions (unioned with the current set,
 //                      config.yaml otherwise byte-preserved). Never invoked on a scheduled run.
 const { parseArgs, repoRoot, isGitRepo } = require('./lib/util');
-const { runInit, detectDevToolingCandidates, planMigration, planUpdate, applyUpdate } = require('./lib/init');
+const { runInit, detectDevToolingCandidates, planMigration, planRuntimeMigration, planUpdate, applyUpdate } = require('./lib/init');
 
 /** Split a comma-separated `--dev-tooling` value into trimmed entries; a bare `--dev-tooling` = []. */
 function parseDevTooling(val) {
@@ -51,10 +51,12 @@ function main() {
     process.stdout.write(JSON.stringify({ status: 'ok', candidates }, null, 2) + '\n');
     return;
   }
-  // Migration detection is likewise read-only: show what a confirmed --migrate would relocate.
+  // Migration detection is likewise read-only: show what a confirmed --migrate would relocate — both
+  // legacy root declarations (STATE.md/RELEASE.md) and legacy machine state into runtime/ (P2).
   if (args['detect-migration']) {
     const plan = planMigration(root);
-    process.stdout.write(JSON.stringify({ status: 'ok', ...plan }, null, 2) + '\n');
+    const runtime = planRuntimeMigration(root);
+    process.stdout.write(JSON.stringify({ status: 'ok', moves: plan.moves, runtime_moves: runtime.moves }, null, 2) + '\n');
     return;
   }
   // Non-destructive reconfigure. Without a write flag it is read-only (print proposed diffs);

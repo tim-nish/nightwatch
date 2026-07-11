@@ -92,11 +92,24 @@ function defaultState(config) {
   return { schema: STATE_SCHEMA, updated: null, last_brief_date: null, jobs };
 }
 
-/** Read `.nightwatch/state.json`, or null if absent/unreadable. Pure read, never writes. */
+/**
+ * Resolve and read the cadence cursors (spec runtime-layout P2): `runtime/cursors.json` when present,
+ * else the legacy `.nightwatch/state.json`. Returns the parsed state plus the resolved source
+ * (`runtime` | `legacy` | null) so a caller can report which layout it read — a pure read that never
+ * writes, so a legacy install keeps its cadence with zero behavior change until a confirmed migration.
+ * @param {string} root @returns {{ state: NightwatchState | null, source: 'runtime'|'legacy'|null }}
+ */
+function readStateResolved(root) {
+  let raw = readJSONSafe(statePath(root));
+  if (raw && typeof raw === 'object') return { state: /** @type {NightwatchState} */ (raw), source: 'runtime' };
+  raw = readJSONSafe(legacyStatePath(root));
+  if (raw && typeof raw === 'object') return { state: /** @type {NightwatchState} */ (raw), source: 'legacy' };
+  return { state: null, source: null };
+}
+
+/** Read the cadence cursors (runtime, with legacy fallback), or null if absent. Never writes. */
 function readState(root) {
-  const raw = readJSONSafe(statePath(root));
-  if (raw == null || typeof raw !== 'object') return null;
-  return /** @type {NightwatchState} */ (raw);
+  return readStateResolved(root).state;
 }
 
 function writeState(root, state) { writeJSON(statePath(root), state); }
@@ -191,6 +204,6 @@ function markBriefed(state, date) {
 module.exports = {
   STATE_SCHEMA, ORDERED_MEMBERS, CADENCE_DAYS, DATE_RE,
   statePath, legacyStatePath, daysBetween, addDays, cadenceDays, nextDue, jobDue,
-  defaultState, readState, writeState, reconcileState, planRun,
+  defaultState, readState, readStateResolved, writeState, reconcileState, planRun,
   alreadyRanTonight, recordRun, markBriefed,
 };

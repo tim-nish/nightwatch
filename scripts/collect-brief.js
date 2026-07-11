@@ -8,7 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
-const { parseArgs, repoRoot, todayISO, nwDir, outDir, ensureDir, readFileSafe, readJSONSafe, exists, progressPercent } = require('./lib/util');
+const { parseArgs, repoRoot, todayISO, nwDir, outDir, outReadPath, ensureDir, readFileSafe, readJSONSafe, exists, progressPercent } = require('./lib/util');
 const { readAllFindings } = require('./lib/findings');
 const { openTracker, releaseReadPath } = require('./lib/tracker');
 const { classifyOpenFindings, newClassificationRows, floorClassifier, runOrdinal, gcPatches } = require('./lib/lifecycle');
@@ -241,7 +241,7 @@ function collect(root, date, { force = false } = {}) {
   const store = openTracker(root, config);
 
   const docs = readAllFindings(root, date, MEMBER_JOBS);
-  const runStatus = readJSONSafe(path.join(outDir(root), `run-status-${date}.json`)) || { jobs: [] };
+  const runStatus = readJSONSafe(outReadPath(root, `run-status-${date}.json`)) || { jobs: [] };
 
   // ---- Finding lifecycle (spec finding-lifecycle P1/P2/P5): classify the carried-forward open set
   // and identify closed findings whose staged patches to garbage-collect. Computed here (pure reads)
