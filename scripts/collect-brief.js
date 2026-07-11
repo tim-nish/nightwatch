@@ -14,6 +14,7 @@ const { openTracker, releaseReadPath } = require('./lib/tracker');
 const { classifyOpenFindings, newClassificationRows, floorClassifier, runOrdinal, gcPatches } = require('./lib/lifecycle');
 const { loadConfig } = require('./lib/config');
 const { excludedTopDirs, unclassifiedTopDirs } = require('./lib/scope');
+const { commitPolicyProbe, layoutUpgradeNudge } = require('./lib/probe');
 
 const MEMBER_JOBS = ['repo-reconcile', 'arch-review', 'release-progress'];
 
@@ -249,8 +250,13 @@ function collect(root, date, { force = false } = {}) {
   // guarded append block below, once, keyed by run-ordinal so a forced re-run traces distinctly. ----
   const ledgerBefore = store.readLedger();
   const openBefore = store.openFindings(); // snapshot BEFORE tonight's finding rows are appended
+  // Commit-policy probe (spec runtime-layout P3): a deterministic, zero-token `git check-ignore`
+  // check — computed up front so its finding both enters the brief and counts as re-observed in the
+  // lifecycle classification. Null when the ledger/briefs are correctly trackable.
+  const probeFinding = commitPolicyProbe(root);
   const reobserved = new Set();
   for (const doc of docs) for (const f of doc.findings || []) reobserved.add(f.id);
+  if (probeFinding) reobserved.add(probeFinding.id);
   const judged = collectJudgmentVerdicts(ledgerBefore, date);
   const lifecycleResults = classifyOpenFindings({ open: openBefore, reobserved, date, classifier: floorClassifier(root, { judged }) });
   // A finding is closed (its patch may be collected) when it is resolved this run or already
@@ -266,6 +272,9 @@ function collect(root, date, { force = false } = {}) {
     for (const n of doc.degraded || []) degradedNotices.push({ job: doc.job, note: n });
     for (const f of doc.findings || []) if (briefEligible(f)) all.push({ ...f, job: doc.job, _cls: classify(f) });
   }
+  // The commit-policy probe finding (computed above) enters the brief like any other — setup ranks
+  // near the top, and it is recorded in the ledger with a stable id so it recurs rather than re-reports.
+  if (probeFinding) all.push({ ...probeFinding, job: 'nightwatch', _cls: classify(probeFinding) });
   // Global ranking for the cap and first-action selection (FR57): priority class → severity →
   // lowest effort (absent last) → id. Fully deterministic (NFR8).
   all.sort((a, b) => a._cls.rank - b._cls.rank || a.severity - b.severity || effortKey(a) - effortKey(b) || a.id.localeCompare(b.id));
@@ -341,6 +350,11 @@ function collect(root, date, { force = false } = {}) {
   if (gcCandidates.length) {
     notes.push(`- Collected ${gcCandidates.length} stale patch${gcCandidates.length === 1 ? '' : 'es'} (finding resolved/dismissed): ${gcCandidates.map((p) => `\`${p}\``).join(', ')}.`);
   }
+  // Layout-upgrade nudge (spec runtime-layout P4): exactly one line pointing a pre-layout install
+  // (legacy paths in use, or the orientation README missing on a repo with memory) at
+  // `init --update`. Detection and reporting only — no overnight writes; a current install gets none.
+  const nudge = layoutUpgradeNudge(root);
+  if (nudge) notes.push(nudge);
   // Scope statement (FR42): name the excluded top-level trees so a wrong scope is visible, never
   // silent. `ignore` (never look) and `dev_tooling` (not the product) are unioned.
   const excluded = excludedTopDirs(root, config);
@@ -378,6 +392,9 @@ function collect(root, date, { force = false } = {}) {
       store.recordRun({ date, job: doc.job, findings: (doc.findings || []).length, degraded: (doc.degraded || []).length, tokens: js.tokens || null, ...runMeta });
       store.recordFindings(doc.findings || [], { date, job: doc.job });
     }
+    // Record the commit-policy probe finding (P3) with its stable id so it dedupes/recurs like any
+    // finding — the probe re-detects it each night, but the ledger counts one recurring finding.
+    if (probeFinding) store.recordFindings([probeFinding], { date, job: 'nightwatch' });
     store.recordRun({ date, job: 'collect-brief', shown: shown.length, total: all.length, cap, ...runMeta });
     // Per-run classification of the carried-forward open set (spec P1/P2): an id tonight's docs
     // re-surfaced is `re-observed` (its finding row already dedupes); every other open finding runs
