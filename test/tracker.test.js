@@ -7,7 +7,7 @@ const { openTracker, itemId, parseRelease, seedFromRelease } = require('../scrip
 
 const TEMPLATE = fs.readFileSync(path.join(__dirname, '..', 'templates', 'RELEASE.md'), 'utf8');
 
-const METHODS = ['listItems', 'upsertItem', 'completeItem', 'appendStatus', 'recordFindings', 'recordFeedback', 'recordRun', 'query', 'flush'];
+const METHODS = ['listItems', 'upsertItem', 'completeItem', 'appendStatus', 'recordFindings', 'recordFeedback', 'recordResolution', 'recordRecheck', 'openFindings', 'recordRun', 'query', 'flush'];
 
 // A finding-shaped object for recordFindings (id is what dedupe/ledger key on).
 function finding(id, over) {
