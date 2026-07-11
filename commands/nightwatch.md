@@ -81,6 +81,26 @@ to `${NW_ROOT}/scripts/init.js` so setup is reproducible and never improvised.
 3. **Interview the human** (you may ask questions here — the one mode that may): authority per area,
    phase, release target and definition of done, optional layering rules.
 
+   For the **phase** step (FR105), describe every option in generic, repository-agnostic terms about
+   *the repository being configured* — never Nightwatch's own epics, packaging, versions, or
+   milestones. Keep the adjacent options distinguishable at a glance:
+   - **prototype** — early exploration; the shape is still moving.
+   - **building** — actively building toward a first version.
+   - **hardening** — still shipping improvements toward the next release.
+   - **released** — maintenance mode; minimal new features.
+
+   Before showing the choices, run the read-only suggestion probe and, **only if** it returns a
+   non-null `suggested`, print one non-binding line `Suggested: <phase>` above the options:
+   ```
+   node ${NW_ROOT}/scripts/init.js --repo . --suggest-phase
+   ```
+   It infers from cheap deterministic signals (an existing release/tag, a published-package manifest,
+   semantic versioning) and returns `{ suggested, signals }`. The suggestion never pre-answers — the
+   human always chooses freely, and you render **no** suggestion line when `suggested` is null (no
+   signals, conflicting signals, or a no-import-substrate repo). Never derive a phase suggestion from
+   an operational target in STATE.md — phase is the human's judgment about maturity, not a derivable
+   fact.
+
 4. **Classify dev-tooling scope** (read-only detection, writes nothing):
    ```
    node ${NW_ROOT}/scripts/init.js --repo . --detect-dev-tooling

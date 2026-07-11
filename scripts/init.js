@@ -16,6 +16,9 @@
 //   --no-config        write STATE.md only (skip .nightwatch/config.yaml).
 //   --detect-dev-tooling  print candidate dev-tooling directories for the human to confirm —
 //                      writes nothing (FR43 detection half).
+//   --suggest-phase    print a non-binding phase suggestion + its signals from cheap deterministic
+//                      evidence (release/tag, published-package manifest, semver) — writes nothing;
+//                      `suggested` is null when signals are absent or the repo has no substrate (FR105).
 //   --dev-tooling a,b  after writing declarations, persist the confirmed dev-tooling set (dir
 //                      names or globs, comma-separated) into config.yaml's `dev_tooling:` (FR43).
 //   --detect-migration print the legacy root artifacts that would move into .nightwatch/ — writes
@@ -27,7 +30,7 @@
 //                      APPLY the confirmed dev-tooling additions (unioned with the current set,
 //                      config.yaml otherwise byte-preserved). Never invoked on a scheduled run.
 const { parseArgs, guardCli, repoRoot, isGitRepo } = require('./lib/util');
-const { runInit, detectDevToolingCandidates, planMigration, planRuntimeMigration, planUpdate, applyUpdate } = require('./lib/init');
+const { runInit, detectDevToolingCandidates, planMigration, planRuntimeMigration, planUpdate, applyUpdate, suggestPhase } = require('./lib/init');
 
 /** Split a comma-separated `--dev-tooling` value into trimmed entries; a bare `--dev-tooling` = []. */
 function parseDevTooling(val) {
@@ -37,12 +40,18 @@ function parseDevTooling(val) {
 }
 
 function main() {
-  const args = guardCli('init.js', process.argv.slice(2), ['probe', 'detect-dev-tooling', 'detect-migration', 'dev-tooling', 'migrate', 'no-config', 'update']);
+  const args = guardCli('init.js', process.argv.slice(2), ['probe', 'detect-dev-tooling', 'detect-migration', 'dev-tooling', 'migrate', 'no-config', 'update', 'suggest-phase']);
   const root = repoRoot(args);
   // init only makes sense inside a git checkout (same precondition as the overnight orchestrator).
   if (!isGitRepo(root)) {
     process.stdout.write(JSON.stringify({ status: 'abort', reason: 'not-a-git-checkout' }, null, 2) + '\n');
     process.exit(1);
+    return;
+  }
+  // Non-binding phase suggestion (FR105) — read-only, like --probe: surface a suggestion for the
+  // interview from cheap deterministic signals, write nothing. `suggested` is null when no signals.
+  if (args['suggest-phase']) {
+    process.stdout.write(JSON.stringify({ status: 'ok', ...suggestPhase(root) }, null, 2) + '\n');
     return;
   }
   // Detection is read-only, like --probe: surface candidates for the interview, write nothing.
