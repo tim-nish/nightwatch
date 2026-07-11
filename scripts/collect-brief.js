@@ -8,7 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
-const { parseArgs, repoRoot, todayISO, nwDir, outDir, outReadPath, ensureDir, readFileSafe, readJSONSafe, exists, progressPercent } = require('./lib/util');
+const { parseArgs, repoRoot, todayISO, nwDir, outDir, outReadPath, ensureDir, readFileSafe, readJSONSafe, exists, progressPercent, git } = require('./lib/util');
 const { readAllFindings } = require('./lib/findings');
 const { openTracker, releaseReadPath } = require('./lib/tracker');
 const { classifyOpenFindings, newClassificationRows, floorClassifier, runOrdinal, gcPatches } = require('./lib/lifecycle');
@@ -16,6 +16,7 @@ const { loadConfig } = require('./lib/config');
 const { excludedTopDirs, unclassifiedTopDirs } = require('./lib/scope');
 const { commitPolicyProbe, layoutUpgradeNudge } = require('./lib/probe');
 const { isClean, checkCitations } = require('./lib/lints');
+const { deriveJourney } = require('./lib/milestones');
 
 const MEMBER_JOBS = ['repo-reconcile', 'arch-review', 'release-progress'];
 
@@ -179,6 +180,63 @@ function renderWhereYouStand(rel, ratio, lines) {
 
 const TRACKED_SECTIONS = ['implementation', 'documentation', 'blockers'];
 const STALE_TAG = '(stale? — confirm)';
+
+// The date of the most recent brief STRICTLY BEFORE `date` (the "yesterday" boundary for Since
+// yesterday). Read from the dated briefs directory so it is deterministic and needs no clock.
+function previousBriefDate(root, date) {
+  let names = [];
+  try { names = fs.readdirSync(path.join(nwDir(root), 'briefs')); } catch { return null; }
+  const dates = names.map((n) => (n.match(/^(\d{4}-\d{2}-\d{2})\.md$/) || [])[1]).filter((d) => d && d < date).sort();
+  return dates.length ? dates[dates.length - 1] : null;
+}
+
+// `## Since yesterday` (spec brief-roadmap-composition P2, maintainer-perspective W10): merges on the
+// default branch and findings resolved since the previous brief. Deterministic; a no-change night
+// renders exactly one line. Git reads are read-only and tolerate a non-git repo (no merges then).
+function renderSinceYesterday(root, store, prevDate, lines) {
+  const items = [];
+  // Merges since the previous brief (title-first per W2: branch name, PR number parenthesized).
+  // Match the merge-commit subject in the log directly (no --merges filter, so a squash/rebase repo
+  // whose PR merges are ordinary commits still surfaces them).
+  const sinceArg = prevDate ? [`--since=${prevDate} 00:00:00`] : ['-n', '20'];
+  const raw = git(root, ['log', '--pretty=%s', ...sinceArg]) || '';
+  for (const line of raw.split('\n')) {
+    const m = line.match(/Merge pull request #(\d+) from \S+?\/(\S+)/);
+    if (m) items.push(`- Merged ${m[2]} (PR #${m[1]}).`);
+  }
+  // Findings resolved since the previous brief (finding lifecycle resolution rows).
+  for (const r of store.readLedger()) {
+    if (r && r.type === 'resolution' && r.id && (!prevDate || (r.date || '') > prevDate)) {
+      items.push(`- Resolved ${r.id}${r.evidence ? `: ${r.evidence}` : ''}.`);
+    }
+  }
+  if (!items.length) { lines.push('- Nothing new since the last brief.'); return; }
+  for (const l of items.sort()) lines.push(l);
+}
+
+// `## The road to release` (spec brief-roadmap-composition P3): the declared journey rendered
+// compactly, or the fallback matrix. `isDone(criterion)` reports tracker completion.
+function renderRoadToRelease(release, rel, ratio, isDone, lines) {
+  const hasMilestones = release && Array.isArray(release.milestones) && release.milestones.length > 0;
+  if (!hasMilestones) {
+    // No tracker at all → the single hint line; a tracker without milestones → the flat ratio + a nudge.
+    renderWhereYouStand(rel, ratio, lines);
+    if (rel && rel.fm && rel.fm.progress != null) lines.push('- Declare `milestones:` in STATE.md for a release roadmap.');
+    return;
+  }
+  const goal = (rel && rel.fm && rel.fm.target) || (release && release.target) || 'release';
+  const j = deriveJourney(release, isDone);
+  lines.push(`- **Your goal — STATE.md:** ${goal}`);
+  for (let i = 0; i < j.milestones.length; i++) {
+    const m = j.milestones[i];
+    const here = i === j.currentIndex ? ' — *you are here*' : '';
+    lines.push(`- ${m.mark} **${m.name}**${here}`);
+  }
+  lines.push('- ○ Hygiene gate before tagging *(waivable gate — generic release checks)*');
+  lines.push('- 🏁 Tag the release.');
+  const blockers = ratio && ratio.blockers && ratio.blockers.length ? ratio.blockers.join(', ') : 'nothing';
+  lines.push(`- **Blocking the release:** ${blockers}`);
+}
 // The number of remaining-criterion titles the "Where you stand" block lists (a short, deterministic
 // preview — the full list lives in the tracker).
 const REMAINING_TITLE_CAP = 3;
@@ -188,13 +246,17 @@ const REMAINING_TITLE_CAP = 3;
 // (definition-of-done items + blockers, excluding stale). Open-item titles feed the remaining preview;
 // a rendered `— evidence: …` tail is stripped so the reader sees the criterion, not the pointer.
 function releaseRatio(store) {
-  const tracked = store.listItems().filter((it) => TRACKED_SECTIONS.includes(it.section) && !it.title.includes(STALE_TAG));
+  const items = store.listItems();
+  const tracked = items.filter((it) => TRACKED_SECTIONS.includes(it.section) && !it.title.includes(STALE_TAG));
   const done = tracked.filter((it) => it.status === 'done').length;
   const remainingTitles = tracked
     .filter((it) => it.status === 'open')
     .map((it) => it.title.replace(/\s+—\s+evidence:.*$/, ''))
     .slice(0, REMAINING_TITLE_CAP);
-  return { done, total: tracked.length, remainingTitles };
+  // Open blockers feed the road's "Blocking the release:" line (spec brief-roadmap-composition P3).
+  const blockers = items.filter((it) => it.section === 'blockers' && it.status === 'open')
+    .map((it) => it.title.replace(/\s+—\s+evidence:.*$/, ''));
+  return { done, total: tracked.length, remainingTitles, blockers };
 }
 
 // Demotion (spec principle 3): a member job with zero acted-on findings for the two most
@@ -241,7 +303,7 @@ function collectJudgmentVerdicts(rows, date) {
 }
 
 function collect(root, date, { force = false } = {}) {
-  const { config, authority } = loadConfig(root);
+  const { config, authority, release } = loadConfig(root);
   const cap = (config.caps && config.caps.brief_total) || 25;
   const store = openTracker(root, config);
 
@@ -302,31 +364,38 @@ function collect(root, date, { force = false } = {}) {
   // Status line — one bold sentence answering "is anything on fire?" before anything else.
   L.push(deriveStatusLine(shown, runStatus), '');
 
+  // Roadmap-first order (spec brief-roadmap-composition P1, Story 10.5): orient before triage —
+  // Since yesterday and The road to release both land ABOVE the fold, before the single First action.
+
+  // ## Since yesterday — what did I just finish? (merges + resolved findings since the last brief).
+  L.push('## Since yesterday');
+  renderSinceYesterday(root, store, previousBriefDate(root, date), L);
+  L.push('');
+
+  // ## The road to release — what's the goal, where am I, what's next? The declared journey, or the
+  // fallback matrix (no tracker → hint; tracker but no milestones → the flat ratio + a nudge).
+  const rel = readReleaseHeader(root, config);
+  const ratio = releaseRatio(store);
+  const doneTitles = new Set(store.listItems().filter((it) => it.status === 'done').map((it) => it.title));
+  L.push('## The road to release');
+  renderRoadToRelease(release, rel, ratio, (crit) => doneTitles.has(crit), L);
+  L.push('');
+
   // Bundle same-remedy findings into action-line groups AFTER the cap (bundling is a rendering step;
   // the cap already counted the underlying findings). A group takes its first member's rank, so the
   // top-ranked group is the First action and the rest keep interleave-priority order.
   const groups = bundleGroups(shown);
 
-  // ▶ First action — exactly one action line (the top-ranked group, which may be a bundle), fully
-  // renderable without reading on.
+  // ## ▶ First action — exactly one action line (the top-ranked group, which may be a bundle).
   const first = groups[0] || null;
   L.push('## ▶ First action');
   if (first) renderActionLine(first, L); else L.push('- Nothing needs you today.');
   L.push('');
 
-  // If you have energy after that — the remaining action-line groups, same grammar.
+  // ## If you have energy after that — the remaining action-line groups, same grammar.
   const rest = groups.slice(1);
   L.push('## If you have energy after that');
   if (rest.length) for (const g of rest) renderActionLine(g, L); else L.push('- Nothing else right now.');
-  L.push('');
-
-  // Where you stand — release position + the doneCount/total ratio it came from + the remaining
-  // criterion titles, then a pointer to the tracker (never its status-entry text). The ratio is
-  // counted from the already-open store, so no second read of RELEASE.md and no new judgment.
-  const rel = readReleaseHeader(root, config);
-  const ratio = releaseRatio(store);
-  L.push('## Where you stand');
-  renderWhereYouStand(rel, ratio, L);
   L.push('');
 
   // ---- Fold: everything below is supporting detail. ----
