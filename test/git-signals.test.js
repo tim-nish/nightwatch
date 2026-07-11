@@ -52,6 +52,32 @@ module.exports = {
     assert.ok(sig.degraded.some((d) => /not a git repository/.test(d)));
   },
 
+  // Story 12.6 / FR104 — honest emptiness for git signals.
+  'git-signals: threshold above max observed churn → unreachable degraded line stating both numbers (FR104)': () => {
+    const r = tmpRepo();
+    gitInit(r);
+    // 24 single-file commits round-robin over 6 files → each file churns exactly 4 times,
+    // below the default coupling threshold of 5, so no pair can ever reach it.
+    for (let i = 0; i < 24; i++) { write(r, `f${i % 6}.txt`, 'v' + i); commit(r, 'c' + i); }
+    const sig = gitSignals(r, { couplingMinCommits: 5 });
+    assert.strictEqual(sig.coupling.length, 0, 'unreachable threshold yields no coupling');
+    const line = sig.degraded.find((d) => /unreachable/.test(d));
+    assert.ok(line, 'an unreachable-threshold degraded line is present');
+    assert.match(line, /threshold 5/, 'states the threshold');
+    assert.match(line, /max observed churn 4/, 'states the observed maximum');
+  },
+
+  'git-signals: placeholder files (.gitkeep/.gitignore) excluded from hotspots (FR104)': () => {
+    const r = tmpRepo();
+    gitInit(r);
+    // .gitignore is touched every commit but is not a design surface — it must not be a hotspot.
+    for (let i = 0; i < 6; i++) { write(r, '.gitignore', 'v' + i); write(r, 'src/a.js', '// ' + i); commit(r, 'c' + i); }
+    const sig = gitSignals(r);
+    assert.ok(!sig.hotspots.some((h) => /\.gitignore$/.test(h.path)), '.gitignore is excluded from hotspots');
+    assert.ok(!sig.churn.some((c) => /\.gitignore$/.test(c.path)), '.gitignore is excluded from churn');
+    assert.ok(sig.hotspots.some((h) => h.path === 'src/a.js'), 'a real source file remains a hotspot');
+  },
+
   'git-signals: deterministic under repeated runs': () => {
     const r = coupledRepo(8);
     const a = JSON.stringify(gitSignals(r).coupling);

@@ -148,6 +148,22 @@ module.exports = {
     assert.deepStrictEqual(doc.findings.map((f) => f.id).sort(), ids(a));
   },
 
+  'zero-candidate path: a no-substrate repo assembles no candidates and is flagged all_vacuous (FR104)': () => {
+    const r = tmpRepo();
+    gitInit(r);
+    write(r, 'docs/a.md', '# just markdown, no code substrate');
+    write(r, 'docs/b.md', '# more prose');
+    commit(r, 'seed');
+    const res = archReview(r, { date: '2000-01-01' });
+    assert.strictEqual(res.ranked.length, 0, 'no candidates on a no-substrate repo');
+    assert.strictEqual(res.all_vacuous, true, 'every signal class is vacuous');
+    assert.strictEqual(res.zero_candidate, true, 'zero-candidate path flagged');
+    assert.ok(res.degraded.some((d) => /all architecture signal classes are vacuous/.test(d)), 'summary degraded line carried through');
+    const doc = readJSON(r, '.nightwatch/runtime/out/arch-review-2000-01-01.json');
+    assert.strictEqual(doc.zero_candidate, true, 'persisted doc records the zero-candidate path');
+    assert.deepStrictEqual(doc.findings, [], 'the persisted findings doc is empty');
+  },
+
   'zero writes outside .nightwatch/ (NFR3)': () => {
     const r = tmpRepo();
     gitInit(r);

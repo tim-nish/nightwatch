@@ -250,8 +250,15 @@ function archReview(root, opts = {}) {
   const findings = candidates.map((c) => c.finding);
   for (const f of ext.findings || []) findings.push(f);
 
+  // Zero-candidate path (FR104): the scaffolding assembled no candidates AND arch-signals found
+  // every class vacuous (no substrate). Surface it so the agent skips the adversarial refute pass
+  // over an empty set (commands/arch-review.md) rather than reading the silence as a clean pass.
+  const zero_candidate = candidates.length === 0 && arch.all_vacuous === true;
+
   const doc = {
     schema: SCHEMA_VERSION, job: 'arch-review', date, phase: phase || null, degraded,
+    all_vacuous: !!arch.all_vacuous,
+    zero_candidate,
     caps: { arch_candidates: cap },
     brief: briefCandidates.map((c) => c.id),
     appendix,
@@ -278,6 +285,8 @@ function archReview(root, opts = {}) {
 
   return {
     date, phase: phase || null, degraded, findings,
+    all_vacuous: !!arch.all_vacuous,
+    zero_candidate,
     ranked: candidates.map((c) => ({ id: c.id, candidate_kind: c.candidate_kind, concern_class: c.concern_class, score: c.score, needs_corroboration: c.needs_corroboration })),
     brief: briefCandidates.map((c) => c.id),
     appendix,

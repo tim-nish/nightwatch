@@ -58,7 +58,9 @@ function archSignals(root) {
     }
   }
   const anyTs = codeFiles.some((f) => /\.(ts|tsx)$/.test(f));
-  if (!anyTs && !codeFiles.some((f) => /\.py$/.test(f))) degraded.push('speculation: no typed language detected — interface-implementer check skipped');
+  // Honest emptiness (FR104): speculation's substrate is a typed language. No typed source →
+  // the class is vacuous ("nothing to check"), reported as degradation — never a clean empty.
+  if (!anyTs && !codeFiles.some((f) => /\.py$/.test(f))) degraded.push('speculation: no typed language detected — interface check vacuous');
   for (const [name, loc] of ifaceDecl) {
     const n = implementsCount.get(name) || 0;
     if (n <= 1) speculation.push({ name, path: loc.path, line: loc.line, implementers: n,
@@ -82,6 +84,9 @@ function archSignals(root) {
     if (modules.length > 1) duplication.push({ name, modules, evidence: loci.slice(0, 6).map((l) => ({ path: l.path })) });
   }
   duplication.sort((a, b) => b.modules.length - a.modules.length || a.name.localeCompare(b.name));
+  // Vacuous when there are no source defs to compare across modules (FR104): a markdown/no-code
+  // repo yields no duplication because there is nothing to duplicate, not because it is clean.
+  if (!duplication.length && nameLoci.size === 0) degraded.push('duplication: no source functions/defs found — check vacuous');
 
   // ---- Import graph (for coupling-overlap and layering) ----
   const fileImports = new Map(); // rel -> resolved targets (repo-relative or bare)
@@ -106,6 +111,10 @@ function archSignals(root) {
     if (shared >= 3 && jac >= 0.6) import_overlap.push({ module_a: mods[i], module_b: mods[j], shared, jaccard: Number(jac.toFixed(2)) });
   }
   import_overlap.sort((a, b) => b.jaccard - a.jaccard);
+  // Vacuous when fewer than two modules carry enough imports to compare (FR104): with no import
+  // substrate the overlap check has nothing to weigh, which is degradation, not a clean result.
+  const comparableModules = mods.filter((m) => moduleImports.get(m).size >= 3).length;
+  if (!import_overlap.length && comparableModules < 2) degraded.push('import-overlap: fewer than two modules with enough imports to compare — check vacuous');
 
   // ---- Layering violations (only when declared) ----
   let layering = [];
@@ -149,8 +158,19 @@ function archSignals(root) {
     } else degraded.push(`growth: architecture doc "${archDoc}" not found/empty`);
   }
 
+  // Zero-candidate path (FR104): when there is no code substrate at all and every candidate
+  // class came back empty, the whole deterministic layer is vacuous. Emit one summary degraded
+  // line and flag it so the judgment layer skips the adversarial refute pass over an empty set
+  // (commands/arch-review.md) rather than reading the silence as a clean pass.
+  const all_vacuous = codeFiles.length === 0
+    && !speculation.length && !duplication.length && !import_overlap.length
+    && !layering.length && !hidden_coupling.length
+    && !((growth.unmentioned_hotspots || []).length);
+  if (all_vacuous) degraded.push('all architecture signal classes are vacuous — no candidates to judge (zero-candidate path)');
+
   return {
     degraded,
+    all_vacuous,
     layering_configured,
     speculation: speculation.slice(0, 40),
     duplication: duplication.slice(0, 40),
