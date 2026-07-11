@@ -29,17 +29,42 @@ module.exports = {
   },
 
   'extendGlobs: a `!pattern` entry re-includes a default-excluded path with one config entry': () => {
-    assert.ok(DEFAULT_DEV_TOOLING.includes('q_a/**'), 'precondition: q_a is a shipped dev-tooling default');
-    const out = extendGlobs(DEFAULT_DEV_TOOLING, ['!q_a/**']);
-    assert.ok(!out.includes('q_a/**'), 'negation removed the default');
+    assert.ok(DEFAULT_DEV_TOOLING.includes('_bmad/**'), 'precondition: _bmad is a shipped dev-tooling default');
+    const out = extendGlobs(DEFAULT_DEV_TOOLING, ['!_bmad/**']);
+    assert.ok(!out.includes('_bmad/**'), 'exact negation removed the default');
     // other defaults are untouched by the single negation.
-    for (const g of DEFAULT_DEV_TOOLING) if (g !== 'q_a/**') assert.ok(out.includes(g), `other default kept: ${g}`);
+    for (const g of DEFAULT_DEV_TOOLING) if (g !== '_bmad/**') assert.ok(out.includes(g), `other default kept: ${g}`);
   },
 
   'extendGlobs: negation cancels a user positive too, and the result is deduped + sorted': () => {
     const out = extendGlobs(DEFAULT_IGNORE, ['tmp/**', 'tmp/**', '!tmp/**']);
     assert.ok(!out.includes('tmp/**'), 'a later !p cancels an earlier p');
     assert.deepStrictEqual(out, [...new Set(out)].sort(), 'deduped and stably sorted');
+  },
+
+  // ---- Story 12.3 / FR101 — shipped-default hygiene -----------------------------------------
+
+  'defaults: q_a/** is NOT shipped dev-tooling; .claude/** ships a !.claude/commands/** re-include (FR101)': () => {
+    assert.ok(!DEFAULT_DEV_TOOLING.includes('q_a/**'), 'q_a/** removed — not a universal convention');
+    assert.ok(DEFAULT_DEV_TOOLING.includes('.claude/**'), '.claude/** still excluded by default');
+    assert.ok(DEFAULT_DEV_TOOLING.includes('!.claude/commands/**'), 'agent commands re-included by a shipped default');
+  },
+
+  'defaults: with defaults only, q_a and .claude/commands are analyzed; the rest of .claude/_bmad excluded (FR101)': () => {
+    // The product-lab regression shape: a content repo whose product is q_a + agent commands.
+    const r = tmpRepo();
+    write(r, 'q_a/2026/q.md', '# question');
+    write(r, '.claude/commands/ask.md', '# /ask');
+    write(r, '.claude/settings.json', '{}');
+    write(r, '.claude/skills/x/SKILL.md', '# skill');
+    write(r, '_bmad/agent.md', '# agent');
+    const { config } = loadConfig(r); // defaults only, no config file
+    const isExcluded = makeIgnore(analysisExcludeGlobs(config));
+    assert.strictEqual(isExcluded('q_a/2026/q.md'), false, 'q_a is product now (not a shipped default)');
+    assert.strictEqual(isExcluded('.claude/commands/ask.md'), false, 'agent commands analyzed via the shipped re-include');
+    assert.strictEqual(isExcluded('.claude/settings.json'), true, 'the rest of .claude/** stays excluded');
+    assert.strictEqual(isExcluded('.claude/skills/x/SKILL.md'), true, 'downloaded skills stay excluded');
+    assert.strictEqual(isExcluded('_bmad/agent.md'), true, '_bmad/** stays excluded');
   },
 
   // ---- Story 12.1 / FR99 — match-based negation: subpath re-includes ------------------------

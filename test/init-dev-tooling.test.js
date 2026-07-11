@@ -32,7 +32,7 @@ module.exports = {
     const cands = detectDevToolingCandidates(root);
     const byDir = Object.fromEntries(cands.map((c) => [c.dir, c.source]));
     assert.strictEqual(byDir['_bmad'], 'convention', '_bmad flagged as a convention');
-    assert.strictEqual(byDir['q_a'], 'convention', 'q_a flagged as a convention');
+    assert.strictEqual(byDir['q_a'], 'heuristic', 'q_a is no longer a shipped convention (Story 12.3) → heuristic');
     assert.strictEqual(byDir['agents'], 'heuristic', 'agents flagged heuristically (no product import)');
     assert.ok(!('lib' in byDir), 'lib is imported by src → not a candidate');
     assert.ok(!('src' in byDir), 'src is product (allowlist + self-referenced) → not a candidate');

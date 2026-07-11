@@ -12,12 +12,15 @@ effort:   {repo-reconcile: medium, arch-review: high, release-progress: medium}
 caps:     {brief_total: 25, reconcile: 10, arch_candidates: 7}
 
 # Two-tier analysis scoping. Both lists EXTEND the shipped defaults (below) rather than
-# replacing them; prefix an entry with "!" to re-include a default-excluded path.
+# replacing them; prefix an entry with "!" to re-include a default-excluded path. Negation is
+# match-based, so "!.claude/commands/**" re-includes that subtree under an excluded ".claude/**".
 ignore: []                  # never analyzed; extends shipped defaults ("!pattern" re-includes)
                             # defaults: dist/**, build/**, out/**, vendor/**, node_modules/**,
                             #           .git/**, coverage/**, **/*.lock, .nightwatch/**
 dev_tooling: []             # develops the product but is not the product; extends shipped defaults
-                            # defaults: _bmad/**, _bmad-output/**, .claude/**, .cursor/**, q_a/**
+                            # defaults: _bmad/**, _bmad-output/**, .claude/**, !.claude/commands/**,
+                            #           .cursor/**  (agent commands are analyzed; q_a/** is NOT a
+                            #           default — declare it yourself if it is tooling in your repo)
                             # excluded from all analysis; exclusions are stated on the brief's
                             # one-line scope statement, never silently.
 extractors: auto            # or a list, e.g. [node, python]
