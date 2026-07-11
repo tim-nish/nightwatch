@@ -105,11 +105,26 @@ to `${NW_ROOT}/scripts/init.js` so setup is reproducible and never improvised.
    ```
    node ${NW_ROOT}/scripts/init.js --repo . --detect-dev-tooling
    ```
-   This prints candidate top-level directories, each tagged `convention` (matches a shipped
-   dev-tooling default) or `heuristic` (a tracked top-level dir referenced by no product import).
-   Show them to the human and confirm which are development-only tooling — "develops the product
-   but is not the product." Only the confirmed set is written (next step); this is a **visible,
-   versioned declaration**, never a hidden default.
+   This prints candidate top-level directories, each with `source` (`convention` — matches a shipped
+   dev-tooling default; or `heuristic` — a tracked top-level dir referenced by no product import), a
+   `checked` pre-selection, and a `description` (FR102). Render them **honestly**:
+   - Show each candidate's `checked` state as its actual pre-selection — pre-checked entries arrive
+     pre-checked and **visually distinct** from unchecked ones. Do **not** stamp a uniform
+     "Recommend" label on every row; the pre-check *is* the recommendation.
+   - Describe every entry in **analysis-scope terms** — use its `description`: what including or
+     excluding it means for what Nightwatch analyzes ("develops the product but is not the product").
+   - Pre-selection follows finding 0035 — a weak signal never pre-excludes product: `convention`
+     matches and **dot-prefixed** heuristic dirs (`.github`, `.devcontainer`) arrive pre-checked;
+     a **non-dot** heuristic dir (e.g. `spaces/`) arrives **unchecked** and stays product unless the
+     human checks it. On a content-class repo the heuristic is disabled entirely — only conventions
+     are shown (FR100), never a content directory proposed as tooling.
+
+   Confirm the human's final checked-state, then translate it into the exact `--dev-tooling` set for
+   the next step (this is a **visible, versioned declaration**, never a hidden default): a **checked
+   heuristic** writes its `dir/**` exclusion; an **unchecked** but pre-checked convention or
+   dot-heuristic (a *declined* default) writes a `!dir/**` re-include; a still-checked convention
+   writes nothing (already a shipped default); a still-unchecked non-dot heuristic writes nothing
+   (it stays product — a decline is a real declaration, never a placebo).
 
 5. **Offer the one-time layout migration** (only if legacy root artifacts exist). Detect first
    (read-only, writes nothing):
