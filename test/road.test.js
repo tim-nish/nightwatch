@@ -10,6 +10,10 @@ const { tmpRepo, write, readFile, gitInit, commit } = require('./helpers');
 const { openTracker, renderRoad } = require('../scripts/lib/tracker');
 const { DEFAULTS } = require('../scripts/lib/config');
 const { releaseProgress } = require('../scripts/release-progress');
+const { collect } = require('../scripts/collect-brief');
+const { writeJSON, outDir } = require('../scripts/lib/util');
+
+const TWO_MILESTONE_STATE = '# s\n```yaml\nrelease:\n  target: "gateway v1 operational"\n  definition_of_done:\n    - "docs done"\n    - "tests green"\n  milestones:\n    - name: "Docs complete"\n      criteria: ["docs done"]\n    - name: "Tests green"\n      criteria: ["tests green"]\n```\n';
 
 const TEMPLATE = fs.readFileSync(path.join(__dirname, '..', 'templates', 'RELEASE.md'), 'utf8');
 const JOURNEY = {
@@ -33,8 +37,17 @@ module.exports = {
     assert.ok(road.includes('  - b') && road.includes('  - c'), 'current milestone criteria expanded as work');
     assert.match(road, /- ○ \*\*Docs validated\*\*/, 'later milestone marked ○');
     assert.match(road, /Hygiene gate before tagging.*waivable gate/, 'waivable hygiene gate present, not interleaved');
-    assert.match(road, /- 🏁 \*\*Tag the release\.\*\*/, '🏁 line present');
+    // Finish line follows the declared target unless a version/tag check is active (FR98).
+    assert.match(road, /- 🏁 \*\*Declare First release — all epics complete done\.\*\*/, '🏁 finish line names the target');
     assert.match(road, /\*\*Blocked by:\*\* a sev-1 finding/, 'blockers line');
+  },
+
+  // ---- finish line follows the declared target (spec release-journey P4/FR98) ----------------
+  'road: "Tag the release" only when a version/tag check is active; else "Declare <target> done."': () => {
+    const shipping = renderRoad(Object.assign({}, JOURNEY, { tags_release: true }));
+    assert.match(shipping, /- 🏁 \*\*Tag the release\.\*\*/, 'version/tag active → tag the release');
+    const operational = renderRoad(Object.assign({}, JOURNEY, { tags_release: false }));
+    assert.match(operational, /- 🏁 \*\*Declare First release — all epics complete done\.\*\*/, 'no tag check → declare the target done');
   },
 
   // ---- marks re-derive every run (spec P2/FR84) ---------------------------------------------
@@ -102,5 +115,53 @@ module.exports = {
     assert.match(out, /\*\*Goal \(yours, declared in STATE\.md\):\*\* v1 — ship it/, 'goal verbatim + attributed');
     assert.match(out, /- ▶ \*\*Docs complete\*\*/, 'the declared milestone renders as current');
     assert.ok(!/— no change|completed:|forced re-run/.test(out), 'history is impact-first, never a run log');
+  },
+
+  // ---- Story 11.7 / FR98 — single road authority: one recorded criterion→done map -------------
+
+  'FR98: release-progress persists the resolved criterion→done map + finish-line flag': () => {
+    const r = tmpRepo();
+    gitInit(r);
+    write(r, '.nightwatch/STATE.md', TWO_MILESTONE_STATE);
+    commit(r, 'state');
+    const res = releaseProgress(r, { date: '2026-07-11' });
+    assert.ok(res.journey && res.journey.criterion_map, 'journey carries a criterion_map');
+    assert.deepStrictEqual(res.journey.criterion_map['docs done'], { criterion: 'docs done', done: false, evidence: null, match: 'exact' });
+    assert.strictEqual(res.journey.tags_release, false, 'no package.json version → not a tagging project');
+  },
+
+  'FR98: the brief road renders marks from the recorded map, not a re-match of tracker state': () => {
+    const r = tmpRepo();
+    gitInit(r);
+    write(r, '.nightwatch/STATE.md', TWO_MILESTONE_STATE);
+    commit(r, 'state');
+    const date = '2026-07-11';
+    // The persisted map is the sole authority: it marks "docs done" DONE even though no tracker item
+    // is completed. If the brief re-matched tracker state it would show ○; consuming the map → ✓.
+    writeJSON(path.join(outDir(r), `release-progress-${date}.json`), {
+      schema: 1, job: 'release-progress', date, degraded: [], findings: [],
+      criterion_map: {
+        'docs done': { criterion: 'docs done', done: true, evidence: null, match: 'exact' },
+        'tests green': { criterion: 'tests green', done: false, evidence: null, match: 'exact' },
+      },
+      tags_release: false,
+    });
+    collect(r, date);
+    const road = readFile(r, '.nightwatch/MORNING.md').split('## The road to release')[1].split('## ▶ First action')[0];
+    assert.match(road, /✓ \*\*Docs complete\*\*/, 'first milestone ✓ from the recorded map (not tracker state)');
+    assert.match(road, /▶ \*\*Tests green\*\* — \*you are here\*/, 'second milestone is now current');
+    assert.match(road, /🏁 Declare gateway v1 operational done\./, 'operational finish line from the persisted flag');
+  },
+
+  'FR98: absent map + criteria not matching the DoD → the road renders unavailable, never a wrong mark': () => {
+    const r = tmpRepo();
+    gitInit(r);
+    // Criteria are PARAPHRASES of the DoD (the 0033 shape); release-progress did NOT run → no map.
+    write(r, '.nightwatch/STATE.md', '# s\n```yaml\nrelease:\n  target: "v1"\n  definition_of_done:\n    - "all commands documented"\n  milestones:\n    - name: "Docs"\n      criteria: ["docs are complete"]\n```\n');
+    commit(r, 'state');
+    collect(r, '2026-07-11');
+    const road = readFile(r, '.nightwatch/MORNING.md').split('## The road to release')[1].split('## ▶ First action')[0];
+    assert.match(road, /Milestone state unavailable/, 'unavailable, naming the mismatch');
+    assert.ok(!/[✓▶] \*\*Docs\*\*/.test(road), 'no ✓/▶ mark guessed');
   },
 };

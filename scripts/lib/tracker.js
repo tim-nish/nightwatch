@@ -387,7 +387,9 @@ function renderRoad(journey) {
   }
   const gate = (journey.hygiene && journey.hygiene.length) ? journey.hygiene.join(', ') : 'generic release checks';
   L.push(`- ○ **Hygiene gate before tagging** *(waivable gate — ${gate})*`);
-  L.push('- 🏁 **Tag the release.**', '');
+  // Finish line follows the declared target (FR98): "Tag the release" only when a version/tag check
+  // is active; otherwise "Declare <target> done." so an operational target never reads as shipping.
+  L.push(journey.tags_release ? '- 🏁 **Tag the release.**' : `- 🏁 **Declare ${journey.goal || 'the release'} done.**`, '');
   L.push(`**Blocked by:** ${(journey.blockers && journey.blockers.length) ? journey.blockers.join(', ') : 'nothing'}`);
   if (journey.notOnRoad && journey.notOnRoad.length) {
     L.push('', '_(not yet on the road)_');
