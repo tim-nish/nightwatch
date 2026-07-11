@@ -6,6 +6,9 @@ updated: 1970-01-01
 ---
 # Release progress
 
+## The road
+<!-- machine-rendered from STATE.md release.milestones every run; do not edit -->
+
 ## Next actions (top 3)
 
 ## Release blockers
@@ -18,13 +21,13 @@ updated: 1970-01-01
 
 ## Remaining — documentation
 
-## Nice to have
+## What changed lately (latest first, capped at 10 entries)
+- 1970-01-01 — tracker initialized from template
 
 ## Done
 <!-- completed work, each item with evidence link -->
 
-## Status update (latest first, capped at 10 entries)
-- 1970-01-01 — tracker initialized from template
+## Nice to have
 
 ## Phase
 _Mirrors STATE.md `phase`._

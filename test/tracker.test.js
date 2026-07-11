@@ -92,7 +92,7 @@ const markdownOnly = {
     const humanLine = '- [ ] Human wrote this EXACT text, do not touch <!-- nw:IT-abc123 -->';
     const notes = '## Notes (human-owned — never machine-edited)\n<!-- guard -->\nMy private release plan.\nLine two.\n';
     const doc = TEMPLATE
-      .replace('## Remaining — implementation\n', `## Remaining — implementation\n${humanLine}\n`)
+      .replace('## Nice to have\n', `## Nice to have\n${humanLine}\n`)
       .replace(/## Notes \(human-owned — never machine-edited\)[\s\S]*$/, notes);
     write(r, '.nightwatch/RELEASE.md', doc);
 
@@ -114,10 +114,10 @@ const markdownOnly = {
     t.completeItem(a.id);
     t.flush();
     const out = readFile(r, '.nightwatch/RELEASE.md');
-    // Canonical reader-side order (FR63): Done sits between Nice to have and Status update, so bound
-    // the completed item by ## Done and the section that follows it.
+    // Reader-side order v2 (release-journey P3): Done sits between "What changed lately" and Nice to
+    // have, so bound the completed item by ## Done and the section that follows it.
     const doneIdx = out.indexOf('## Done');
-    const afterDoneIdx = out.indexOf('## Status update');
+    const afterDoneIdx = out.indexOf('## Nice to have');
     const itemIdx = out.indexOf('finish A');
     assert.ok(itemIdx > doneIdx && itemIdx < afterDoneIdx, 'item sits in the Done section');
     assert.ok(/- \[x\] finish A/.test(out), 'rendered checked');
@@ -151,11 +151,13 @@ const markdownOnly = {
     t.flush();
 
     const out = readFile(r, '.nightwatch/RELEASE.md');
-    // Canonical reader-side order: Next → Blockers → Decisions → impl → docs → Nice → Done → Status → Phase → Notes.
+    // Reader-side order v2 (release-journey P3), flat (no milestones declared → no road, sections kept):
+    // Next → Blockers → Decisions → impl → docs → What changed lately → Done → Nice → Phase → Notes.
+    // "Status update" re-serializes under its new name "What changed lately".
     const order = [
       '## Next actions (top 3)', '## Release blockers', '## Human decisions needed',
-      '## Remaining — implementation', '## Remaining — documentation', '## Nice to have',
-      '## Done', '## Status update', '## Phase', '## Notes',
+      '## Remaining — implementation', '## Remaining — documentation', '## What changed lately',
+      '## Done', '## Nice to have', '## Phase', '## Notes',
     ].map((h) => out.indexOf(h));
     assert.ok(order.every((i) => i >= 0), 'every canonical section present');
     for (let i = 1; i < order.length; i++) assert.ok(order[i] > order[i - 1], `section ${i} follows ${i - 1} in canonical order`);

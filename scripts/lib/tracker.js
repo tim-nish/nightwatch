@@ -170,6 +170,7 @@ function makeCore(seed) {
   const items = new Map(); // id -> {id, title, section, status:'open'|'done', evidence, raw?}
   const order = [];
   let status = []; // [{date, text}] latest first
+  let journey = null; // the release road (spec release-journey P2), re-derived and set each run
   let dirty = false;
 
   if (seed) {
@@ -187,9 +188,14 @@ function makeCore(seed) {
   return {
     get dirty() { return dirty; },
     get statusLines() { return status; },
+    get journey() { return journey; },
     items,
     order,
     markDirty() { dirty = true; },
+    // Set the release road (spec release-journey P2/10.4): the goal + ✓ ▶ ○ milestone marks, the
+    // waivable hygiene gate, the 🏁 line, and the blockers line — re-derived from criteria state every
+    // run (never stored in the file), so a stale mark self-corrects. Passing a journey dirties the doc.
+    setJourney(j) { journey = j || null; dirty = true; return journey; },
 
     listItems(filter) { return list(filter); },
     query(filter) { return list(filter); },
@@ -286,12 +292,19 @@ function loadReleaseText(readPath) {
   return tmpl != null ? tmpl : '';
 }
 
+// The reader-side status section (spec release-journey P3): renamed "Status update" → "What changed
+// lately". Parsing accepts BOTH names so a file in either order/name reads correctly; the writer only
+// ever emits the new name. The road section is machine-rendered from the journey, never parsed for items.
+const STATUS_HEADING_RE = /^## (Status update|What changed lately)/;
+const ROAD_HEADING_RE = /^## The road/;
+
 /** Seed core items from a parsed RELEASE.md model (parsed items become open/done in-memory). */
 function seedFromRelease(model) {
   const items = [];
   const status = [];
   for (const sec of model.sections) {
-    if (/^## Status update/.test(sec.heading)) {
+    if (ROAD_HEADING_RE.test(sec.heading)) continue; // machine-rendered every run; never a source of items
+    if (STATUS_HEADING_RE.test(sec.heading)) {
       for (const line of sec.bodyRaw.split('\n')) {
         const m = line.match(/^- (\d{4}-\d{2}-\d{2}) — (.*)$/);
         if (m) status.push({ date: m[1], text: m[2] });
@@ -310,36 +323,84 @@ function seedFromRelease(model) {
   return { items, status };
 }
 
-// Reader-side canonical section order (output-file-taxonomy §P3): what to do first, history last.
-// Whenever the document is rewritten (dirty), sections are re-emitted in THIS order regardless of the
-// order they were read in. Sections not named here (any human-added extra) keep their relative input
-// order after the known sections; Notes is always last and byte-preserved.
+// Reader-side canonical section order v2 (spec release-journey P3, supersedes FR63): the road leads,
+// history reads as impact, Notes last. Whenever the document is rewritten (dirty), sections re-emit in
+// THIS order regardless of read order. "Release blockers" and the "Remaining —" sections DISAPPEAR as
+// headings — blockers fold into the road's Blocked-by line and remaining work into the current
+// milestone / a "(not yet on the road)" group (serialization only; the tracker items and their
+// `section` field are retained). Sections not named here keep their relative input order before Notes.
+// The road leads; "Release blockers" and "Remaining —" rank here for the FLAT (no-milestones)
+// rendering, but are FOLDED (skipped) when a journey is set — blockers → the road's Blocked-by line,
+// remaining work → the current milestone / "(not yet on the road)". With them folded, the journey
+// order is exactly: The road → Next actions → Human decisions → What changed lately → Done → Nice →
+// Phase → Notes (spec release-journey P3).
 const CANONICAL_ORDER = [
+  'The road',                        // machine-rendered journey (first)
   HEADING_BY_SECTION.next,           // Next actions (top 3)
-  HEADING_BY_SECTION.blockers,       // Release blockers
+  HEADING_BY_SECTION.blockers,       // Release blockers (flat only; folded with a journey)
   HEADING_BY_SECTION.decisions,      // Human decisions needed
-  HEADING_BY_SECTION.implementation, // Remaining — implementation
-  HEADING_BY_SECTION.documentation,  // Remaining — documentation
-  HEADING_BY_SECTION.nice,           // Nice to have
+  HEADING_BY_SECTION.implementation, // Remaining — implementation (flat only; folded)
+  HEADING_BY_SECTION.documentation,  // Remaining — documentation (flat only; folded)
+  'What changed lately',             // was Status update — impact-first history
   'Done',
-  'Status update',
+  HEADING_BY_SECTION.nice,           // Nice to have (Parked)
   'Phase',
 ];
+// Folded into the road ONLY when a journey is set (a declared milestones list). Absent milestones →
+// flat rendering keeps these sections so no tracker item is ever lost (FR17).
+const FOLDED_HEADINGS = [HEADING_BY_SECTION.blockers, HEADING_BY_SECTION.implementation, HEADING_BY_SECTION.documentation];
 
 /** Rank a heading in the canonical reader-side order (lower = earlier). Notes always sorts last. */
 function canonicalRank(heading) {
   const h = heading.replace(/^##\s+/, '');
   if (/^Notes\b/.test(h)) return CANONICAL_ORDER.length + 1;
+  // "Status update" ranks where "What changed lately" does (the rename) so a legacy file re-sorts correctly.
+  if (h.startsWith('Status update')) return CANONICAL_ORDER.indexOf('What changed lately');
   for (let i = 0; i < CANONICAL_ORDER.length; i++) {
     if (h === CANONICAL_ORDER[i] || h.startsWith(CANONICAL_ORDER[i])) return i;
   }
   return CANONICAL_ORDER.length; // unknown/extra: after the known sections, before Notes
 }
 
+const CHANGED_HEADING = '## What changed lately (latest first, capped at 10 entries)';
+
+/**
+ * Render the `## The road` block (spec release-journey P2): the goal (attributed), ✓ ▶ ○ milestone
+ * lines with the current milestone's remaining criteria expanded and later milestones as one
+ * orientation clause, the waivable hygiene gate (never interleaved with declared milestones), the 🏁
+ * line, the blockers line, and any "(not yet on the road)" work. Marks are whatever `journey` carries
+ * — re-derived from criteria state by the caller every run, never stored. Byte-deterministic.
+ */
+function renderRoad(journey) {
+  const L = ['## The road', ''];
+  L.push(`**Goal (yours, declared in STATE.md):** ${journey.goal || '—'}`, '');
+  const ms = journey.milestones || [];
+  for (let i = 0; i < ms.length; i++) {
+    const m = ms[i];
+    if (m.done) { L.push(`- ✓ **${m.name}**`); continue; }
+    if (i === journey.currentIndex) {
+      L.push(`- ▶ **${m.name}** — *current milestone.*`);
+      for (const c of (m.criteria || [])) L.push(`  - ${c}`);
+    } else {
+      L.push(`- ○ **${m.name}**`);
+    }
+  }
+  const gate = (journey.hygiene && journey.hygiene.length) ? journey.hygiene.join(', ') : 'generic release checks';
+  L.push(`- ○ **Hygiene gate before tagging** *(waivable gate — ${gate})*`);
+  L.push('- 🏁 **Tag the release.**', '');
+  L.push(`**Blocked by:** ${(journey.blockers && journey.blockers.length) ? journey.blockers.join(', ') : 'nothing'}`);
+  if (journey.notOnRoad && journey.notOnRoad.length) {
+    L.push('', '_(not yet on the road)_');
+    for (const c of journey.notOnRoad) L.push(`- ${c}`);
+  }
+  L.push('');
+  return L.join('\n');
+}
+
 function renderRelease(model, core) {
   // Untouched document → return original bytes (guarantees byte-identical round-trip, FR16). Canonical
   // reordering happens ONLY when the document is actually rewritten (a legacy-order file re-serializes
-  // into the new order the first time something dirties it).
+  // into the new order + new section names the first time something dirties it).
   if (!core.dirty) return model.raw;
 
   const doneItems = core.order.map((id) => core.items.get(id)).filter((it) => it && it.status === 'done');
@@ -352,20 +413,32 @@ function renderRelease(model, core) {
 
   const renderLine = (it) => (it.raw != null ? it.raw : renderItem(it));
 
-  // Serialize one input section into its block. Byte-equivalent to the strings the previous in-order
-  // renderer emitted per section, so joining blocks with '\n' reproduces the same bytes — only the
-  // ORDER of the blocks changes (to the canonical reader-side order via canonicalRank below).
+  // Fold the journey's blockers + "(not yet on the road)" work from the tracker's own open items when
+  // the caller didn't supply them, so nothing an ex-section held is lost (spec P3 folding).
+  const journey = core.journey;
+  if (journey) {
+    if (!journey.blockers) journey.blockers = openBySection.blockers.map((it) => it.title);
+    if (!journey.notOnRoad) {
+      const criteria = new Set((journey.milestones || []).flatMap((m) => m.criteria || []));
+      const extras = [...openBySection.implementation, ...openBySection.documentation]
+        .map((it) => it.title).filter((t) => !criteria.has(t));
+      journey.notOnRoad = [...(journey.unreferenced || []), ...extras];
+    }
+  }
+
+  // Fold blockers/remaining into the road ONLY when a journey is set; flat rendering keeps them.
+  const isFolded = (heading) => !!journey && FOLDED_HEADINGS.some((h) => heading === `## ${h}`);
+
   const blockFor = (sec) => {
-    // Notes is human-owned — always byte-preserved.
     if (/^## Notes/.test(sec.heading)) return [sec.heading, sec.bodyRaw.replace(/\n$/, '')].join('\n');
-    if (/^## Status update/.test(sec.heading)) {
+    if (ROAD_HEADING_RE.test(sec.heading)) return journey ? renderRoad(journey) : [sec.heading, sec.bodyRaw.replace(/\n$/, '')].join('\n');
+    if (STATUS_HEADING_RE.test(sec.heading)) {
       const lines = core.statusLines.map((s) => `- ${s.date} — ${s.text}`);
-      return [sec.heading, lines.join('\n'), ''].join('\n');
+      return [CHANGED_HEADING, lines.join('\n'), ''].join('\n');
     }
     const isDone = /^## Done/.test(sec.heading);
     let section = null;
     for (const s of SECTIONS) if (sec.heading === `## ${HEADING_BY_SECTION[s]}`) section = s;
-    // Unknown/extra section or Phase → byte-preserve the body as-is.
     if (!isDone && !section) return [sec.heading, sec.bodyRaw.replace(/\n$/, '')].join('\n');
     const { preamble } = parseItems(sec.bodyRaw);
     const listItems = isDone ? doneItems : openBySection[section];
@@ -377,9 +450,13 @@ function renderRelease(model, core) {
     return chunk.join('\n');
   };
 
-  // Head first, then every input section re-sorted into canonical order (stable on input index, so
-  // unknown/extra sections and any duplicate headings keep their relative order deterministically).
-  const ordered = model.sections
+  // Input sections re-sorted into canonical order; folded headings (Release blockers, Remaining —)
+  // are dropped entirely (their items fold into the road). If a journey is set but the file has no
+  // "## The road" section (a legacy file), inject a synthetic one so the road always leads.
+  const kept = model.sections.filter((sec) => !isFolded(sec.heading));
+  const hasRoad = kept.some((sec) => ROAD_HEADING_RE.test(sec.heading));
+  const synthetic = (journey && !hasRoad) ? [{ heading: '## The road', bodyRaw: '' }] : [];
+  const ordered = [...synthetic, ...kept]
     .map((sec, i) => ({ sec, i, rank: canonicalRank(sec.heading) }))
     .sort((a, b) => a.rank - b.rank || a.i - b.i);
   const out = [model.head.replace(/\n$/, '')];
@@ -578,7 +655,7 @@ function toLedgerRow(f, meta) {
 }
 
 module.exports = {
-  openTracker, itemId, parseRelease, renderRelease, seedFromRelease,
+  openTracker, itemId, parseRelease, renderRelease, renderRoad, seedFromRelease,
   KNOWN_BACKENDS, RECOGNIZED_BACKENDS, SECTIONS, HEADING_BY_SECTION, ledgerPath,
   releaseReadPath, releaseWritePath, DEFAULT_RELEASE_PATH,
 };

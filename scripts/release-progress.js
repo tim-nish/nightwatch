@@ -19,7 +19,7 @@ const { loadConfig } = require('./lib/config');
 const { releaseChecks } = require('./release-checks');
 const { openTracker, itemId, releaseReadPath } = require('./lib/tracker');
 const { makeFinding, SCHEMA_VERSION, readFindings } = require('./lib/findings');
-const { milestoneFindings } = require('./lib/milestones');
+const { milestoneFindings, deriveJourney } = require('./lib/milestones');
 
 // The header note stamped when there is no declared `release:` block — a coarse, honest signal
 // that "done" is only generic hygiene until a human declares a real definition of done in STATE.md.
@@ -332,21 +332,34 @@ function releaseProgress(root, opts = {}) {
     || newBlockers.length > 0 || newDecisions.length > 0;
 
   if (material) {
+    // "What changed lately" entries are impact-first (spec release-journey P6 / writing-harness W10):
+    // what changed since yesterday and whether it needs you, never a run log.
     for (const c of completedThisRun) {
       const ev = evStr(c.evidence);
-      store.appendStatus(`completed: ${c.title}${ev ? ` (evidence: ${ev})` : ''}`, date);
+      store.appendStatus(`Done: ${c.title}${ev ? ` (evidence: ${ev})` : ''} — nothing needs you here.`, date);
     }
     if (!completedThisRun.length) {
-      store.appendStatus(`progress ${progressPercent(progress)}% (${delta >= 0 ? '+' : ''}${Math.round(delta * 100)}); ${addedThisRun.length} new item(s)`, date);
+      const dir = delta > 0 ? 'forward' : (delta < 0 ? 'regressed' : 'held');
+      store.appendStatus(`Progress ${dir} to ${progressPercent(progress)}% (${delta >= 0 ? '+' : ''}${Math.round(delta * 100)}); ${addedThisRun.length} new item(s).`, date);
     }
     // Mirror the human-declared target from STATE (never invent one) alongside progress/notice.
     const headPatch = { progress, updated: date, notice };
     if (declaredTarget != null) headPatch.target = declaredTarget;
     store.updateHead(headPatch);
   } else {
-    // No-change night: only `updated:` and one "no change" status line change.
-    store.appendStatus('no change', date);
+    // No-change night, stated as impact (spec P6): never "forced re-run: progress unchanged".
+    store.appendStatus('No forward movement; nothing needs you.', date);
     store.updateHead({ updated: date });
+  }
+
+  // Release road (spec release-journey P2): re-derive ✓ ▶ ○ marks from criteria state and hand the
+  // journey to the tracker so RELEASE.md opens with the road. Only when milestones are declared —
+  // absent milestones keep the flat rendering (Story 10.3). Marks are never stored, always re-derived.
+  if (release && Array.isArray(release.milestones) && release.milestones.length) {
+    const doneTitles = new Set(store.listItems().filter((it) => it.status === 'done').map((it) => it.title));
+    const j = deriveJourney(release, (crit) => doneTitles.has(crit));
+    const blockers = store.listItems().filter((it) => it.section === 'blockers' && it.status === 'open').map((it) => it.title);
+    store.setJourney({ goal: target, milestones: j.milestones, currentIndex: j.currentIndex, nextIndex: j.nextIndex, unreferenced: j.unreferenced, blockers });
   }
 
   store.flush();
