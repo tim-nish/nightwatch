@@ -47,6 +47,23 @@ module.exports = {
     assert.deepStrictEqual(openFindings(rows).map((o) => o.id), ['RC-early', 'RC-mid-a', 'RC-mid-b', 'RC-late']);
   },
 
+  'lifecycle: openFindings is run-relative — excludeDate drops the current run\'s rows (FR93)': () => {
+    const rows = [
+      fRow('RC-carry', { date: '2026-07-09' }),                 // recorded on a prior date
+      fRow('RC-carry', { date: '2026-07-10' }),                 // re-observed tonight (member appended)
+      fRow('RC-fresh', { date: '2026-07-10' }),                 // first seen tonight
+    ];
+    // Without excludeDate the whole ledger is the open set — tonight's fresh finding looks carried.
+    assert.deepStrictEqual(openFindings(rows).map((o) => o.id), ['RC-carry', 'RC-fresh']);
+    // Run-relative: tonight's rows are outputs, not inputs. RC-carry survives via its 07-09 row
+    // (firstDate stays 07-09); RC-fresh — only ever seen tonight — is NOT in the incoming open set.
+    const incoming = openFindings(rows, { excludeDate: '2026-07-10' });
+    assert.deepStrictEqual(incoming.map((o) => o.id), ['RC-carry'], 'only genuinely carried-forward findings');
+    assert.strictEqual(incoming[0].firstDate, '2026-07-09', 'firstDate from the pre-tonight row');
+    // A repo whose only rows are tonight's → the incoming open set is empty (first-run corollary).
+    assert.deepStrictEqual(openFindings([fRow('RC-a', { date: '2026-07-10' })], { excludeDate: '2026-07-10' }), []);
+  },
+
   // ---- classification (pure) ----------------------------------------------------------------
   'lifecycle: re-observed ids get no row; the rest are not-re-examined by default': () => {
     const open = openFindings([fRow('RC-aaa'), fRow('RC-bbb')]);

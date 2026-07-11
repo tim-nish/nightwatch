@@ -16,7 +16,7 @@ const { loadConfig } = require('./lib/config');
 const { analysisExcludeGlobs } = require('./lib/scope');
 const { inventory } = require('./surface-inventory');
 const { makeFinding, recurrenceCounts, readLedger, appendLedger, SCHEMA_VERSION } = require('./lib/findings');
-const { patchFileFor } = require('./lib/lifecycle');
+const { patchFileFor, runOrdinal } = require('./lib/lifecycle');
 
 /**
  * Find the declared authority entry whose `artifact` glob matches a claim's source path.
@@ -268,10 +268,16 @@ function adversarialPass(driftFindings, refute) {
 function recordLedger(root, date, findings, refutedCount, force = false) {
   // Same-date guard, unless forced (spec finding-lifecycle P6): a forced re-run's run row is
   // appended with `forced: true` rather than swallowed, so the ledger never misses a run.
-  const already = readLedger(root).some((r) => r.type === 'run' && r.job === 'repo-reconcile' && r.date === date);
+  const ledger = readLedger(root);
+  const already = ledger.some((r) => r.type === 'run' && r.job === 'repo-reconcile' && r.date === date);
   if (already && !force) return;
+  // This member CLI is the AUTHORITATIVE writer of its post-judgment run row (FR94): one row per
+  // (job, date, run_ordinal), carrying the real finding count. The ordinal is the brief-assembly
+  // cycle count for this date (runOrdinal counts collect-brief rows), so a forced re-run — which
+  // re-runs members after a completed brief — stamps the next ordinal and cannot collide with the
+  // prior run's row. The collector reads this row and skips writing a duplicate.
   /** @type {any} */
-  const runRow = { type: 'run', date, job: 'repo-reconcile', findings: findings.length, refuted: refutedCount };
+  const runRow = { type: 'run', date, job: 'repo-reconcile', findings: findings.length, refuted: refutedCount, run_ordinal: runOrdinal(ledger, date) };
   if (force) runRow.forced = true;
   /** @type {any[]} */
   const rows = [runRow];
