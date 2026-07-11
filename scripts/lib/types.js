@@ -124,6 +124,8 @@
  * @typedef {object} Config
  * @property {Record<string, string>} cadence
  * @property {Record<string, number>} budget_tokens
+ * @property {number} recheck_budget Fraction of a job's budget_tokens reserved for re-verifying
+ *   carried-forward open findings (spec finding-lifecycle P3); default 0.15, 0 disables it.
  * @property {Record<string, string>} effort
  * @property {{ brief_total: number, reconcile: number, arch_candidates: number }} caps
  * @property {string[]} ignore

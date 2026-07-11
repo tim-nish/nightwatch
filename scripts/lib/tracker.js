@@ -563,10 +563,18 @@ function openTracker(repo, config) {
 }
 
 function toLedgerRow(f, meta) {
-  return {
+  const row = {
     type: 'finding', id: f.id, kind: f.kind, severity: f.severity,
     date: (meta && meta.date) || '', job: (meta && meta.job) || undefined,
   };
+  // Persist the cited evidence loci (and the cited text, when the finding carries one) so the
+  // deterministic re-verification floor (spec finding-lifecycle P2) can re-check a carried-forward
+  // finding from the ledger alone, without its original transient findings doc.
+  if (Array.isArray(f.evidence) && f.evidence.length) {
+    row.evidence = f.evidence.map((e) => (e && e.line != null ? { path: e.path, line: e.line } : { path: e.path }));
+  }
+  if (typeof f.text === 'string' && f.text) row.text = f.text;
+  return row;
 }
 
 module.exports = {

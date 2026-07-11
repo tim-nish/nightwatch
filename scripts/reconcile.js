@@ -321,6 +321,10 @@ function reconcile(root, opts = {}) {
         patchLoc = { path: c.source.path, line: delLine };
         extra = { direction: c.source.path, patch_file: patchFile };
       }
+      // Carry the drifted claim text so the deterministic re-verification floor (spec
+      // finding-lifecycle P2) can, on a later run, check whether it is still present at the cited
+      // line — the free check that distinguishes a still-drifted finding from a resolved one.
+      if (c.text) extra = Object.assign({ text: c.text }, extra);
       const f = makeFinding('repo-reconcile', { kind: 'drift', severity, action, verified: false,
         title: c.title, locus: c.locus, evidence: [c.source], extra });
       if (patchLoc) pendingPatch.set(f.id, patchLoc);
