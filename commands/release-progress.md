@@ -17,16 +17,18 @@ before running anything, and call the result `${NW_ROOT}` for the rest of this f
 
 1. If `${CLAUDE_PLUGIN_ROOT}` is set, use it (official plugin install).
 2. Else if `${NIGHTWATCH_ROOT}` is set, use it (local/symlink install — see `docs/install.md`).
-3. Else stop immediately and report: "Nightwatch root not found — set `NIGHTWATCH_ROOT` to the
-   plugin directory (see docs/install.md) or install Nightwatch as a Claude Code plugin." Do
-   not guess a path.
+3. Else if the orchestrator launched you and supplied a Nightwatch root in your prompt, use that
+   (a scheduled `/nightwatch` run resolves the root once and hands it to each member job) — this is
+   the normal overnight path, and neither env var need be set in the subagent's environment.
+4. Else stop and report: "Nightwatch root not found — set `NIGHTWATCH_ROOT` to the plugin directory
+   (see docs/install.md) or install Nightwatch as a Claude Code plugin." Do not guess a path.
 
 ## Inputs
 
 - `${NW_ROOT}/scripts/release-checks.js` — deterministic hygiene checks (generic source of "done").
 - `STATE.md` `release:` block (declared source of "done") — read via config.
 - The current `RELEASE.md` (or the template on first run).
-- Tonight's `.nightwatch/out/repo-reconcile-<date>.json` and `arch-review-<date>.json` **if present** (you are fully functional standalone).
+- Tonight's `.nightwatch/runtime/out/repo-reconcile-<date>.json` and `arch-review-<date>.json` **if present** (you are fully functional standalone).
 
 ## Procedure
 
@@ -34,7 +36,7 @@ before running anything, and call the result `${NW_ROOT}` for the rest of this f
    ```
    node ${NW_ROOT}/scripts/release-checks.js --repo .
    ```
-   Read `.nightwatch/out/release-checks-<date>.json`. Read the `release:` block from `STATE.md`
+   Read `.nightwatch/runtime/out/release-checks-<date>.json`. Read the `release:` block from `STATE.md`
    (parse the single fenced yaml block). Read the current `RELEASE.md`; if absent, instantiate
    from `${NW_ROOT}/templates/RELEASE.md`.
 
@@ -64,7 +66,7 @@ before running anything, and call the result `${NW_ROOT}` for the rest of this f
 
 6. Write `RELEASE.md`. Emit findings JSON so the brief and ledger see this run:
    - Use the schema in `${NW_ROOT}/scripts/lib/findings.js` (require it, or write JSON
-     conforming to `.nightwatch/out/release-progress-<date>.json`).
+     conforming to `.nightwatch/runtime/out/release-progress-<date>.json`).
    - Include a ≤ 12-line brief summary as an `info` finding: progress delta since last run, new
      blockers, new decisions, next actions. Mark deterministic findings `verified: true`.
 

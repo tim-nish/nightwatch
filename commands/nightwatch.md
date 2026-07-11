@@ -16,9 +16,11 @@ before running anything, and call the result `${NW_ROOT}` for the rest of this f
 
 1. If `${CLAUDE_PLUGIN_ROOT}` is set, use it (official plugin install).
 2. Else if `${NIGHTWATCH_ROOT}` is set, use it (local/symlink install — see `docs/install.md`).
-3. Else stop immediately and report: "Nightwatch root not found — set `NIGHTWATCH_ROOT` to the
-   plugin directory (see docs/install.md) or install Nightwatch as a Claude Code plugin." Do
-   not guess a path.
+3. Else if the orchestrator launched you and supplied a Nightwatch root in your prompt, use that
+   (a scheduled `/nightwatch` run resolves the root once and hands it to each member job) — this is
+   the normal overnight path, and neither env var need be set in the subagent's environment.
+4. Else stop and report: "Nightwatch root not found — set `NIGHTWATCH_ROOT` to the plugin directory
+   (see docs/install.md) or install Nightwatch as a Claude Code plugin." Do not guess a path.
 
 **These safety rules bind every member job and you enforce them by contract:**
 
@@ -26,7 +28,7 @@ before running anything, and call the result `${NW_ROOT}` for the rest of this f
 - Write surface, exhaustively: `.nightwatch/**` (now holding `STATE.md`, `RELEASE.md` by default,
   `config.yaml`, `briefs/`, `ledger.jsonl`, `state.json`, `out/`), the configured **`release_path`**
   when set outside `.nightwatch/` (e.g. a root or `docs/` `RELEASE.md`), patch files under
-  `.nightwatch/out/`, and (opt-in) `nightwatch/*` branches via a **temporary worktree**. Nothing
+  `.nightwatch/runtime/out/`, and (opt-in) `nightwatch/*` branches via a **temporary worktree**. Nothing
   else, ever — never the user's current branch or working tree, never the project's root `.gitignore`.
 - Never push, never open PRs or issues, never post externally. No network.
 - Idempotent per date; runs under a permission profile where prompts are impossible.
@@ -225,7 +227,7 @@ scheduling decision:
   wrong — fix `.nightwatch/config.yaml` before spending the budget.
 
 On **scheduled (non-interactive)** runs, print nothing: the same `scope` and `estimate` are written
-to `.nightwatch/out/run-status-<date>.json` by the non-`--plan` scheduler call, and the exclusions
+to `.nightwatch/runtime/out/run-status-<date>.json` by the non-`--plan` scheduler call, and the exclusions
 surface as the brief's one-line scope statement instead.
 
 **First-run confirmation gate (FR40).** When `--plan` reports `gate.required: true` **and** this
@@ -299,7 +301,7 @@ declaration the user maintains — a helpful write is still a write.
    A crash, timeout, or budget exhaustion of one member is recorded as **one line** and **never
    blocks the remaining jobs** — the findings-file contract means `release-progress` runs on
    whatever JSON exists, so a partial night degrades cleanly. Record per-member outcomes to
-   `.nightwatch/out/run-status-<date>.json` as
+   `.nightwatch/runtime/out/run-status-<date>.json` as
    `{ "jobs": [ {"job","status":"ok|crashed|timeout|skipped","note","tokens"} ] }`.
 
    **Live narration (interactive runs only, FR39).** As each lifecycle event happens, narrate it as
@@ -352,11 +354,11 @@ wakes to a brief (FR32):
 - **Not a git checkout** → `orchestrate.js --plan` returns `status:"abort"` and writes a one-line
   stub `MORNING.md` (and dated brief) naming the failure. Stop; run no members.
 - **A member crashes or exceeds `timeout_minutes`** → kill that subagent, then record its outcome
-  in `.nightwatch/out/run-status-<date>.json` — `{"job", "status":"timeout"|"crashed", "note",
+  in `.nightwatch/runtime/out/run-status-<date>.json` — `{"job", "status":"timeout"|"crashed", "note",
   "tokens"}` — and proceed to the next job. A member cadence left out records `"status":"skipped"`.
   `collect-brief.js` renders every non-`ok` status as exactly **one line** in the "Failures &
   degraded notices" section, so the surviving jobs' sections are untouched and the run still exits
   success.
 - **`collect-brief.js` itself fails** → the raw findings JSON is left untouched in
-  `.nightwatch/out/`, and the collector still writes a stub `MORNING.md` (and dated brief) naming
+  `.nightwatch/runtime/out/`, and the collector still writes a stub `MORNING.md` (and dated brief) naming
   the failure. **No brief at all is itself a signal — the collector always attempts a stub.**
