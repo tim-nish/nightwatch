@@ -243,9 +243,20 @@ function renderSinceYesterday(root, store, prevDate, lines) {
   for (const l of items.sort()) lines.push(l);
 }
 
-// `## The road to release` (spec brief-roadmap-composition P3): the declared journey rendered
-// compactly, or the fallback matrix. `isDone(criterion)` reports tracker completion.
-function renderRoadToRelease(release, rel, ratio, isDone, lines) {
+// True when every milestone criterion is byte-equal to a declared definition_of_done item — the
+// only case exact-text matching is trustworthy. When false and no persisted map exists, the road
+// cannot know the marks and renders them unavailable rather than guess (FR98).
+function criteriaMatchDoD(release) {
+  const dod = new Set(Array.isArray(release.definition_of_done) ? release.definition_of_done : []);
+  return (release.milestones || []).every((m) => (m.criteria || []).every((c) => dod.has(c)));
+}
+
+// `## The road to release` (spec brief-roadmap-composition P3, release-journey P4/FR98): the declared
+// journey rendered compactly from the SINGLE recorded criterion→done map (`cmap`) that release-progress
+// persisted — never a re-match of raw criterion text, so RELEASE.md and the brief cannot disagree.
+// `cmap` absent + criteria that don't match the DoD → milestone state unavailable. `tagsRelease`
+// picks the finish line.
+function renderRoadToRelease(release, rel, ratio, cmap, tagsRelease, lines) {
   const hasMilestones = release && Array.isArray(release.milestones) && release.milestones.length > 0;
   if (!hasMilestones) {
     // No tracker at all → the single hint line; a tracker without milestones → the flat ratio + a nudge.
@@ -254,15 +265,25 @@ function renderRoadToRelease(release, rel, ratio, isDone, lines) {
     return;
   }
   const goal = (rel && rel.fm && rel.fm.target) || (release && release.target) || 'release';
-  const j = deriveJourney(release, isDone);
   lines.push(`- **Your goal — STATE.md:** ${goal}`);
+  if (!cmap && !criteriaMatchDoD(release)) {
+    // Absent map + criteria that don't byte-match the DoD: the road can't know the marks. Render
+    // the state as unavailable naming the setup finding, never a wrong ✓/▶ (release-journey P4.3).
+    lines.push('- ⚠ Milestone state unavailable — declared `criteria` do not match `definition_of_done` (see the setup finding). Run `/release-progress`.');
+    const blockers0 = ratio && ratio.blockers && ratio.blockers.length ? ratio.blockers.join(', ') : 'nothing';
+    lines.push(`- **Blocking the release:** ${blockers0}`);
+    return;
+  }
+  // Consume the recorded map (single authority); fall back to exact match only when no map exists.
+  const isDone = (crit) => (cmap && Object.prototype.hasOwnProperty.call(cmap, crit)) ? !!cmap[crit].done : false;
+  const j = deriveJourney(release, isDone);
   for (let i = 0; i < j.milestones.length; i++) {
     const m = j.milestones[i];
     const here = i === j.currentIndex ? ' — *you are here*' : '';
     lines.push(`- ${m.mark} **${m.name}**${here}`);
   }
   lines.push('- ○ Hygiene gate before tagging *(waivable gate — generic release checks)*');
-  lines.push('- 🏁 Tag the release.');
+  lines.push(tagsRelease ? '- 🏁 Tag the release.' : `- 🏁 Declare ${goal} done.`);
   const blockers = ratio && ratio.blockers && ratio.blockers.length ? ratio.blockers.join(', ') : 'nothing';
   lines.push(`- **Blocking the release:** ${blockers}`);
 }
@@ -393,11 +414,18 @@ function collect(root, date, { force = false } = {}) {
   // / not re-examined since DATE. Rendered on the action line; empty for a brand-new finding.
   for (const f of all) f._fresh = freshnessSuffix(f, clsById, openById);
 
+  // Single road authority (FR98): consume the criterion→done map release-progress persisted so the
+  // brief's road (and this tiebreak's current-milestone derivation) render from the same recorded
+  // facts as RELEASE.md, never a re-match of raw text. `tagsRelease` picks the finish line.
+  const rpDoc = docs.find((d) => d.job === 'release-progress');
+  const cmap = (rpDoc && rpDoc.criterion_map) || null;
+  const tagsRelease = !!(rpDoc && rpDoc.tags_release);
+  const mapIsDone = (crit) => (cmap && Object.prototype.hasOwnProperty.call(cmap, crit)) ? !!cmap[crit].done : false;
+
   // First-action continuity tiebreak (spec P5): among equals, work that advances the CURRENT
   // milestone wins — a strict tiebreak insertion after severity, before effort. Deterministic.
-  const doneTitles = new Set(store.listItems().filter((it) => it.status === 'done').map((it) => it.title));
   const journey = (release && Array.isArray(release.milestones) && release.milestones.length)
-    ? deriveJourney(release, (crit) => doneTitles.has(crit)) : null;
+    ? deriveJourney(release, mapIsDone) : null;
   const currentCriteria = journey && journey.currentIndex >= 0
     ? new Set(journey.milestones[journey.currentIndex].criteria) : new Set();
   const advancesRank = (f) => (currentCriteria.has(f.title) || (f.evidence || []).some((e) => currentCriteria.has(e.path)) ? 0 : 1);
@@ -448,7 +476,7 @@ function collect(root, date, { force = false } = {}) {
   // fallback matrix (no tracker → hint; tracker but no milestones → the flat ratio + a nudge).
   // `rel`/`ratio` were read once above (the status-line sanity check shares them).
   L.push('## The road to release');
-  renderRoadToRelease(release, rel, ratio, (crit) => doneTitles.has(crit), L);
+  renderRoadToRelease(release, rel, ratio, cmap, tagsRelease, L);
   L.push('');
 
   // Bundle same-remedy findings into action-line groups AFTER the cap (bundling is a rendering step;

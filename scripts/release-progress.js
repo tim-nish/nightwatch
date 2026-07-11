@@ -128,7 +128,7 @@ function briefFinding(brief) {
  * @param {{ date?: string, force?: boolean }} [opts]
  * @returns {{ wrote: boolean, malformed?: boolean, idempotent?: boolean, noChange: boolean,
  *   date: string, progress: number|null, prevProgress: number, delta: number, notice: string|null,
- *   brief: string[], findings: any[], degraded: string[] }}
+ *   brief: string[], findings: any[], degraded: string[], journey?: any }}
  */
 function releaseProgress(root, opts = {}) {
   const date = opts.date || todayISO();
@@ -355,11 +355,24 @@ function releaseProgress(root, opts = {}) {
   // Release road (spec release-journey P2): re-derive ✓ ▶ ○ marks from criteria state and hand the
   // journey to the tracker so RELEASE.md opens with the road. Only when milestones are declared —
   // absent milestones keep the flat rendering (Story 10.3). Marks are never stored, always re-derived.
+  let journeyForDoc = null; // the resolved journey + criterion→done map, persisted for the brief (FR98)
   if (release && Array.isArray(release.milestones) && release.milestones.length) {
-    const doneTitles = new Set(store.listItems().filter((it) => it.status === 'done').map((it) => it.title));
-    const j = deriveJourney(release, (crit) => doneTitles.has(crit));
+    const doneItems = store.listItems().filter((it) => it.status === 'done');
+    const doneTitles = new Set(doneItems.map((it) => it.title));
+    const isDone = (crit) => doneTitles.has(crit);
+    const j = deriveJourney(release, isDone);
     const blockers = store.listItems().filter((it) => it.section === 'blockers' && it.status === 'open').map((it) => it.title);
-    store.setJourney({ goal: target, milestones: j.milestones, currentIndex: j.currentIndex, nextIndex: j.nextIndex, unreferenced: j.unreferenced, blockers });
+    // Single road authority (spec release-journey P4, FR98): persist the RESOLVED criterion→done map
+    // so the brief renders identical marks from these recorded facts instead of re-matching raw text
+    // (the 0033 divergence). The deterministic layer matches exactly, so `match` is always `exact`.
+    const evidenceFor = (crit) => { const it = doneItems.find((x) => x.title === crit); return (it && it.evidence && it.evidence[0] && it.evidence[0].path) || null; };
+    const criterion_map = {};
+    for (const m of j.milestones) for (const c of (m.criteria || [])) criterion_map[c] = { criterion: c, done: isDone(c), evidence: evidenceFor(c), match: 'exact' };
+    // Finish line follows the declared target (FR98): "Tag the release" only when a version/tag check
+    // is active (the project actually tags); otherwise "Declare <target> done."
+    const tags_release = (checks || []).some((c) => c.id === 'version_tag' && c.status !== 'skip');
+    journeyForDoc = { goal: target, milestones: j.milestones, currentIndex: j.currentIndex, nextIndex: j.nextIndex, unreferenced: j.unreferenced, blockers, criterion_map, tags_release };
+    store.setJourney(journeyForDoc);
   }
 
   store.flush();
@@ -369,7 +382,7 @@ function releaseProgress(root, opts = {}) {
   // criterion / unreferenced DoD item, or a single nudge to declare `milestones:` when absent.
   // Declared-not-inferred — the road is the maintainer's judgment.
   const findings = [briefFinding(brief), ...(store.setupFindings || []), ...milestoneFindings(release)];
-  return { wrote: true, noChange: !material, date, progress, prevProgress, delta, notice, brief, findings, degraded };
+  return { wrote: true, noChange: !material, date, progress, prevProgress, delta, notice, brief, findings, degraded, journey: journeyForDoc };
 }
 
 /** Read the current Next actions back out of the store (for the idempotent-run brief). */
@@ -389,6 +402,10 @@ function main() {
     schema: SCHEMA_VERSION, job: 'release-progress', date,
     degraded: res.degraded || [], findings: res.findings || [],
     progress: res.progress, delta: res.delta, wrote: res.wrote, no_change: res.noChange,
+    // Single road authority (FR98): the resolved criterion→done map + finish-line flag the brief
+    // consumes so its road renders identical marks without re-matching raw criterion text.
+    criterion_map: (res.journey && res.journey.criterion_map) || null,
+    tags_release: !!(res.journey && res.journey.tags_release),
   };
   writeJSON(path.join(outDir(root), `release-progress-${date}.json`), doc);
   process.stdout.write(JSON.stringify({ progress: res.progress, delta: res.delta, no_change: res.noChange, wrote: res.wrote, brief_lines: (res.brief || []).length }, null, 2) + '\n');

@@ -46,7 +46,8 @@ module.exports = {
     assert.match(road, /▶ \*\*Docs complete\*\* — \*you are here\*/, 'current milestone tagged you-are-here');
     assert.match(road, /○ \*\*Tests green\*\*/, 'later milestone visible with ○ (W3)');
     assert.match(road, /waivable gate/, 'waivable hygiene gate labelled');
-    assert.match(road, /🏁 Tag the release\./, '🏁 line');
+    // No version/tag check active on this fixture → the finish line names the declared target (FR98).
+    assert.match(road, /🏁 Declare First release done\./, '🏁 finish line follows the target');
     assert.match(road, /\*\*Blocking the release:\*\* nothing/, 'blocking line');
   },
 

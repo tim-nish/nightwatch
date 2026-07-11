@@ -67,6 +67,9 @@
  * @property {string} date ISO `YYYY-MM-DD`.
  * @property {string[]} degraded Human-readable notes about signals that could not be gathered.
  * @property {Finding[]} findings
+ * @property {Record<string, {criterion: string, done: boolean, evidence: string|null, match: string}>|null} [criterion_map]
+ *   release-progress only (FR98): the resolved criterion→done map the brief road consumes.
+ * @property {boolean} [tags_release] release-progress only (FR98): whether a version/tag check is active.
  */
 
 /**
