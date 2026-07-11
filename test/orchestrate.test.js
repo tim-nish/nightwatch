@@ -122,6 +122,23 @@ module.exports = {
     assert.deepStrictEqual(forced.due, ['repo-reconcile', 'arch-review', 'release-progress'], 'forced run repeats tonight');
   },
 
+  // ---- FR92: the state-advance call is immune to the brief its own night wrote --------------
+  // The documented night writes tonight's brief (collect-brief) BEFORE the state-advancing
+  // orchestrate call. The idempotency gate must key on last_brief_date only — a brief-file check
+  // would no-op that call, so the cadence cursors would never be written and weekly cadence would
+  // never engage.
+  'idempotency: a pre-existing dated brief does NOT block the state advance (FR92)': () => {
+    const root = tmpRepo();
+    gitInit(root); commit(root, 'init');
+    write(root, `.nightwatch/briefs/${DATE}.md`, '# tonight\n'); // collect-brief already ran
+    const res = orch(root);
+    assert.strictEqual(res.status, 'ran', 'state advance proceeds despite tonight\'s brief on disk');
+    const st = readJSON(root, '.nightwatch/runtime/cursors.json');
+    assert.strictEqual(st.last_brief_date, DATE, 'cursors written and sentinel stamped');
+    assert.strictEqual(st.jobs['arch-review'].next_due, '2026-07-16', 'weekly cadence engaged (last_run + 7d)');
+    assert.strictEqual(orch(root).status, 'noop', 'a genuine second same-night run still no-ops via last_brief_date');
+  },
+
   'idempotency: --plan is read-only and never writes state.json': () => {
     const root = tmpRepo();
     gitInit(root); commit(root, 'init');
