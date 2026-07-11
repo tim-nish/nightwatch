@@ -31,6 +31,20 @@ before running anything, and call the result `${NW_ROOT}` for the rest of this f
 - Never push, never open PRs or issues, never post externally. No network.
 - Idempotent per date; runs under a permission profile where prompts are impossible.
 
+**Writing contract (inject verbatim into every prose-producing job — spec writing-harness P4).**
+Every document is written to a declared objective, under the per-surface contract that is the single
+canonical source of its objective, section reader-questions, and style rules W1–W10. Before a member
+authors any prose field, inject its surface's contract **verbatim** into that member's prompt — obtain
+it deterministically (zero tokens, no model) with:
+```
+node ${NW_ROOT}/scripts/lib/writing.js  # or require('writing').assembleContract('MORNING.md' | 'RELEASE.md')
+```
+Prose is authored **once, as the structured fields the surface defines — never free text**, and each
+section opens with its answer (BLUF); a sentence that answers no declared reader question is cut. A
+generated document may reference **only** artifacts of the target repository — a citation you cannot
+locate under the repo root is dropped, never trusted. Write as the maintainer's chief of staff (W10),
+never as the tool's narrator.
+
 ---
 
 ## `init` mode (daytime, interactive — the ONLY mode that may ask questions)

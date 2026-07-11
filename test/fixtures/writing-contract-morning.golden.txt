@@ -1,0 +1,28 @@
+# Writing contract — MORNING.md
+
+Objective: The maintainer begins productive work within 3 minutes of opening it.
+Acceptance (timed cold read): Timed cold read: open → first keystroke of real work, ≤ 3 minutes.
+Inclusion rule (per sentence): if removing a sentence would not slow the reader's path to the objective, move it below the fold, to an appendix, or out of the document.
+
+Sections — each opens with its answer (BLUF); a sentence that answers no declared question is cut:
+- Status line — answers: is anything on fire?
+- ## Since yesterday — answers: what did I just finish?
+- ## The road to release — answers: what's the goal, where am I, what's next?
+- ## ▶ First action — answers: what single thing do I do right now?
+- ## If you have energy after that — answers: what comes after that?
+- ## Details — answers: how exactly do I do each task?
+- ## Machine notes — nothing to act on — answers: what did the machine want me to know?
+
+Style rules (normative for every section):
+- W1 — No hard wraps: never wrap inside a sentence; one bullet = one source line.
+- W2 — Self-evident references: no bare `#N`. Cite title-first with the number parenthesized ("Story 7.4: … (PR #78)") or repo-prefixed ("writing-assistant#78").
+- W3 — The road continues: wherever a milestone path renders, the next and following milestones are visible, and each action names — in words — the milestone it advances and what closing it unlocks.
+- W4 — No unexplained derivations: no bare arithmetic ("half"), no ordinal-only milestone references ("milestone 3"), no purpose-free parentheticals; estimates state their basis or are dropped.
+- W5 — One work vocabulary — exact and exclusive: blocker (stops the release) / remaining work (inside the current milestone) / waivable gate (optional, generic) / later milestone.
+- W6 — One register, explained affordances: uniform style; interactive affordances (feedback checkboxes) explained at or before first use; roadmap marks (✓ ▶ ○) visually distinct from feedback checkboxes ([ ]).
+- W7 — Context restoration: every action is self-contained for a reader who has not thought about the issue since yesterday — what to change, why it matters, expected outcome.
+- W8 — Whole-document governance: these rules bind every section equally (quality must not decay after the lead sections).
+- W9 — Details are work briefings: per task — what exactly to change / why the change is necessary / what outcome to expect and how to verify it; discovery provenance and run history go to the appendix or Machine notes.
+- W10 — Perspective inversion: write as the maintainer's chief of staff, never as the tool's narrator.
+
+Author prose ONCE, as the structured fields the surface defines — never free text. Reference only artifacts of THIS repository; a citation you cannot locate under the repo root is dropped.
