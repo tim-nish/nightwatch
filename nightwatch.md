@@ -135,7 +135,7 @@ Four things genuinely cannot be inferred by any implementation:
 | Assumption | Why inference is forbidden | Mechanism |
 |---|---|---|
 | Which artifact is authoritative per area | Guessing wrong silently corrupts the repo's truth | `STATE.md` `authority:`; absent → reconcile still detects conflicts but omits direction-of-fix, and its finding #1 is "declare authority" |
-| What "release-ready" means | Definition of done is a product judgment | `STATE.md` `release:`; absent → generic hygiene checklist only, tracker labeled "generic criteria" |
+| What "release-ready" means | Definition of done is a product judgment | `STATE.md` `release:` (`definition_of_done`, plus optional ordered `milestones:` referencing DoD items — the journey order is declared, never inferred); absent → generic hygiene checklist only, tracker labeled "generic criteria"; DoD without `milestones:` → flat rendering + one setup nudge |
 | Layering rules | Directory layout ≠ intended architecture | `layers:` in config; absent → layering checks skipped, reported as not-configured |
 | Current phase | Changes ranking (overengineering matters more pre-release; drift more after) | `phase:` in `STATE.md`; absent → neutral ranking |
 
@@ -179,20 +179,24 @@ nightwatch/
 
 ```
 .nightwatch/                        # Nightwatch's single home (zero Nightwatch files in root by default)
-  README.md                         # ~15-line orientation: the tier map below, written by init
+  README.md                         # orientation: the four-column map (edit? / owner / delete? / commit?), written by init
   # ── read (morning) ──
   MORNING.md                        # THE file: byte-identical copy of the newest dated brief — open this
   # ── edit (daytime — overnight runs never rewrite your content) ──
   STATE.md                          # your declarations (drafted by /nightwatch init)
   config.yaml                       # operational knobs; nothing here changes overnight
-  RELEASE.md                        # release tracker (default release_path): next actions first, Notes tail is yours
-  # ── machine memory (never open) ──
+  RELEASE.md                        # release tracker (default release_path): the road first, Notes tail is yours
+  # ── machine memory (committed, never opened or edited by hand) ──
   briefs/2026-07-08.md              # dated copies of each brief (committed — they're memory)
   ledger.jsonl                      # every finding + your checkbox verdicts, backfilled automatically
-  state.json                        # cadence cursors — the machine's "state", unrelated to STATE.md
-  .gitignore                        # nested: ignores out/ without touching the repo's root .gitignore
-  out/                              # per-run JSON, transient, gitignored — internal EXCEPT *.patch,
-                                    # which the brief links by full path when one is ready
+  .gitignore                        # nested: ignores runtime/ without touching the repo's root .gitignore
+  # ── disposable runtime (gitignored as a unit; deleting it only resets cadence) ──
+  runtime/
+    cursors.json                    # cadence cursors + last-run dates (formerly state.json — legacy
+                                    # path still read; the machine's cursor, unrelated to STATE.md)
+    out/                            # per-run JSON, transient — internal EXCEPT *.patch files, which
+                                    # the brief links by full path and which survive while their
+                                    # finding is open (spec: docs/specs/finding-lifecycle.md P5)
 ```
 
 By default **no Nightwatch-owned file lands in the repo root** — the `.nightwatch/`
@@ -200,8 +204,14 @@ directory is the single home. `RELEASE.md` can be relocated to the root (or else
 e.g. `docs/`) via `release_path` (§7) for projects that want it as a public deliverable —
 the one opt-in exception. Every user-facing description of this layout — the README,
 install docs, `init` output, and `.nightwatch/README.md` — uses the tier vocabulary shown
-above: *read (morning)* / *edit (daytime)* / *machine memory (never open)*
-(spec: `docs/specs/output-file-taxonomy.md`).
+above and answers the four questions per file: *edit? / owner / safe to delete? /
+committed?* (specs: `docs/specs/output-file-taxonomy.md`, `docs/specs/runtime-layout.md`).
+The `runtime/` boundary is normative: everything under it is disposable and gitignored;
+nothing outside it is. Legacy paths (`state.json`, top-level `out/`) are read as
+fallbacks until an `init --update`-confirmed migration; a run-start `git check-ignore`
+probe on the ledger and briefs emits one setup finding when the repo's ignore rules
+would discard Nightwatch's memory, and an install predating the current layout gets one
+Machine-notes nudge pointing at `init --update` (runtime-layout P3/P4).
 
 **Cross-repo coupling: none.** Each installation is self-contained. Multi-repo
 aggregation is explicitly not this plugin's job; a portfolio view would be a separate
@@ -209,7 +219,8 @@ consumer that reads each repo's `MORNING.md`.
 
 ### 2.5 Shared findings contract
 
-Every job emits `.nightwatch/out/<job>-<date>.json` conforming to one schema. This is
+Every job emits `.nightwatch/runtime/out/<job>-<date>.json` (legacy `.nightwatch/out/`
+read as fallback until migrated — §2.4) conforming to one schema. This is
 the inter-command interface: `release-progress` consumes the other jobs' findings
 through it, and the brief collector consumes all three. Jobs are therefore loosely
 coupled — any job runs standalone, and a partial night degrades cleanly.
@@ -225,7 +236,7 @@ coupled — any job runs standalone, and a partial night degrades cleanly.
     "evidence": [{"path": "README.md", "line": 41}, {"path": "src/cli.ts", "line": 12}],
     "action": "patch-available|human-decision|daytime-task",
     "next_step": { "summary": "Apply the ready-made README fix",
-                   "command": "git apply .nightwatch/out/reconcile-2026-07-08.patch",
+                   "command": "git apply .nightwatch/runtime/out/reconcile-2026-07-08-RC-0031.patch",
                    "effort_min": 2 },
     "verified": true
 } ] }
@@ -243,6 +254,13 @@ coupled — any job runs standalone, and a partial night degrades cleanly.
   same adversarial pass as the finding itself; the brief collector renders action lines
   from it mechanically (§6) and falls back to `title` when absent
   (spec: `docs/specs/brief-composition.md`).
+- **Lifecycle (spec: `docs/specs/finding-lifecycle.md`):** a finding stays **open** —
+  and keeps rendering in the brief — until resolved or dismissed. Every run classifies
+  each open finding (`re-observed` / `resolved` / `still-open` / `not-re-examined`) via
+  a zero-token deterministic evidence recheck plus a budgeted judgment recheck
+  (`recheck_budget`, reserved before new discovery), and records the classification as
+  ledger rows; forced re-runs always leave a ledger trace (`forced: true`). Patch files
+  are named per finding id and are never deleted while their finding is open.
 
 All shared schemas (findings, signals, tracker items) are defined exactly once, as
 JSDoc typedefs in `lib/types.js` (§2.8); every producer and consumer imports them.
@@ -388,6 +406,35 @@ Constraints that keep every backend equivalent (and migration mechanical):
   absent from a production install by `--omit=dev`). A type error fails CI exactly
   like a failing unit test.
 
+### 2.9 Writing harness
+
+Every generated document is written to a **declared primary objective** and under a
+per-surface communication contract (spec: `docs/specs/writing-harness.md`):
+
+| Document | Primary objective (falsifiable; timed cold-read acceptance) |
+|---|---|
+| `MORNING.md` | The maintainer begins productive work within **3 minutes** of opening it. |
+| `RELEASE.md` | The maintainer can state the goal, current milestone, and next milestone within **1 minute**. |
+
+- **Inclusion rule (per sentence):** content that doesn't speed the reader toward the
+  objective moves below the fold, to an appendix, or out of the document.
+- **Contract layers, matching principle 4:** judgment layers author prose fields under
+  injected per-surface contracts (each section's declared reader question + the style
+  rules W1–W10 — no hard wraps, self-evident references, milestone-by-name, one work
+  vocabulary of *blocker / remaining work / waivable gate / later milestone*, one
+  register, context restoration, work-briefing Details, maintainer's perspective);
+  the deterministic collector lints the mechanical rules and falls back to mechanical
+  rendering on failure; the adversarial pass adds a **reader-question check** alongside
+  its truth check.
+- **Citation integrity:** no bare `#N` — references are title-first or repo-prefixed;
+  every cited PR/commit is verified against the *target* repo's own git history by a
+  deterministic collector check (a non-matching citation is flagged and rendered
+  numberless); the judgment layer may cite only target-repo artifacts, restated in
+  every member-job prompt — dogfooding makes "the plugin's own repo is in context" the
+  common case.
+- **Status entries** answer, impact first: *what changed since yesterday, and does it
+  need you?* — never an execution log.
+
 ---
 
 ## 3. `/repo-reconcile` — specification
@@ -436,7 +483,9 @@ instead of re-deriving them. Output: `out/surface-<date>.json`.
 4. Adversarial pass: a second subagent attempts to refute each `drifted` verdict;
    only survivors reach the brief.
 5. For drifted claims in `derived` artifacts: generate a unified-diff **patch file**
-   at `out/reconcile-<date>.patch`. Patch files are the default and only mechanism;
+   at `runtime/out/reconcile-<date>-<finding-id>.patch` (per-finding naming; a patch is
+   never deleted while its finding is open — spec: `docs/specs/finding-lifecycle.md`
+   P5). Patch files are the default and only mechanism;
    if `patch_branch: true`, additionally apply the patch on branch
    `nightwatch/reconcile/<date>` created in a **temporary worktree** — the user's
    working tree and checked-out branch are never touched. For drifted claims
@@ -603,24 +652,30 @@ updated: 2026-07-08
 ---
 # Release progress
 
+## The road                   <!-- goal verbatim; ✓ ▶ ○ milestones; waivable hygiene gate; 🏁; "Blocked by:" line -->
 ## Next actions (top 3)
-## Release blockers
 ## Human decisions needed
-## Remaining — implementation
-## Remaining — documentation
-## Nice to have
-## Done                       <!-- completed work, each item with evidence link -->
-## Status update (latest first, capped at 10 entries)
-- 2026-07-08 — reconcile idempotency done (RP-011 ✓); new blocker RP-019 (broken quickstart link)
+## What changed lately (latest first, capped at 10 entries)
+- 2026-07-08 — Reconcile is now idempotent — nothing needs you for it; one new blocker appeared: the quickstart link is broken (fix before tagging).
 
+## Done — evidence appendix   <!-- completed work, each item with evidence link -->
+## Parked (nice to have)
 ## Phase
 ## Notes (human-owned — never machine-edited)
 ```
 
-Sections are serialized in **reader-side order** — what to do next first, history last —
-and parsed by heading name, so a file in the pre-2026-07 order is read correctly and
-re-serialized in this order on the next run (Notes stays last and byte-preserved;
-spec: `docs/specs/output-file-taxonomy.md` P3).
+Sections are serialized in **journey order** — the road first, history and evidence
+below — and parsed by heading name, so files in either legacy order (pre-2026-07 or the
+interim reader-side order) read correctly and re-serialize into this order on the next
+rewrite (Notes stays last and byte-preserved). Milestone marks (✓ ▶ ○) are re-derived
+from criteria state every run, never stored, and the declared journey comes from the
+optional ordered `milestones:` key in `STATE.md`'s `release:` block (each milestone
+references `definition_of_done` items by exact text; mismatches are setup findings;
+absent `milestones:` → flat rendering plus one setup nudge). Legacy section headings
+("Release blockers", "Remaining — …", "Status update", "Nice to have") are still parsed;
+their contents render inside the road / What-changed sections. Spec:
+`docs/specs/release-journey.md`. "What changed lately" entries follow the §2.9 status
+contract — impact first, never an execution log.
 
 Item format: `- [ ] <title> (evidence: path:line | spec §) · RP-014` — the id trails the
 line so the reader meets the action before the code; leading-id lines from older files
@@ -631,8 +686,10 @@ parse identically. Ids are stable and backend-independent; completed items move 
 
 1. **Declared:** the `STATE.md` `release:` block — `target:` plus
    `definition_of_done:` (human judgment, e.g. "quickstart reproduces in 15 min on a
-   fresh clone"). Absent → source 2 only, and the tracker header says *"generic
-   criteria — declare `release:` in STATE.md for a real definition of done"*.
+   fresh clone"), plus the optional ordered `milestones:` list (name + `criteria:`
+   exact-text references to DoD items) that turns the flat criteria into the journey
+   the road renders. Absent `release:` → source 2 only, and the tracker header says
+   *"generic criteria — declare `release:` in STATE.md for a real definition of done"*.
 2. **Generic:** `release-checks.js`, deterministic hygiene checks valid for any
    public repo: LICENSE present; README has install + quickstart sections; CI config
    exists (and last test run passes, if cheaply runnable); no committed-secret
@@ -654,13 +711,15 @@ parse identically. Ids are stable and backend-independent; completed items move 
 3. Never delete an item it didn't create; a human-added item that appears obsolete is
    tagged `(stale? — confirm)` instead.
 4. Recompute `progress:` (fraction of definition-of-done items plus blockers
-   resolved — a coarse honest number, not a promise); refresh **Next actions** (top
-   3, each pointing at a specific file or spec); append one status line; `flush()`.
-5. Emit a position summary for the brief: the done/total ratio and target, the titles
-   of remaining definition-of-done items, progress delta since last run, new blockers,
-   new decisions, next actions. The collector renders "Where you stand" from these
-   fields — a short position statement plus a pointer to the tracker — never the full
-   status-entry text (which would duplicate `RELEASE.md` verbatim; §6).
+   resolved — a coarse honest number, not a promise); re-derive the road's milestone
+   marks from criteria state; refresh **Next actions** (top 3, each naming — in words —
+   the milestone it advances and what closing it unlocks); append one **What changed
+   lately** entry per the §2.9 status contract; `flush()`.
+5. Emit the journey payload for the brief: goal, ordered milestones with marks and the
+   current milestone's remaining criteria, blockers, decisions, next actions, plus the
+   done/total ratio (the no-milestones fallback). The collector renders the brief's
+   road from these fields — never the tracker's entry text (which would duplicate
+   `RELEASE.md` verbatim; §6).
 
 **Safety rules (normative):** the only repo file the markdown backend writes is
 `RELEASE.md`; the **Notes** section and human-authored item text are byte-preserved
@@ -703,12 +762,17 @@ same criterion; store-interface conformance suite run against every backend.
 **Purpose:** the single scheduled entrypoint. Runs what's due, in dependency order,
 unattended; emits one capped, ranked morning brief; survives any member job failing.
 
-**Execution order:** `repo-reconcile` → `arch-review` (only if due per cadence) →
-`release-progress` (last, so it consumes tonight's findings) → `collect-brief.js`.
-Each member runs as an independent subagent with its `budget_tokens` and `effort`
-from config. A crash or budget exhaustion is recorded as one brief line and **never
-blocks the remaining jobs** — the findings-file contract means `release-progress`
-runs on whatever JSON exists, so partial nights degrade cleanly.
+**Execution order:** run-start checks (backfill feedback; load the **open-finding set**
+from the store and run the deterministic evidence recheck — finding-lifecycle P1/P2;
+the `git check-ignore` memory probe and the layout nudge — runtime-layout P3/P4) →
+`repo-reconcile` → `arch-review` (only if due per cadence) → `release-progress` (last,
+so it consumes tonight's findings) → `collect-brief.js`. Each member runs as an
+independent subagent with its `budget_tokens` and `effort` from config, receives its
+open findings, and reserves `recheck_budget` for judgment rechecks **before** new
+discovery; end-of-run classifications land as ledger rows. A crash or budget
+exhaustion is recorded as one brief line and **never blocks the remaining jobs** — the
+findings-file contract means `release-progress` runs on whatever JSON exists, so
+partial nights degrade cleanly.
 
 **Interactive-run presentation** (presentation only — no new scheduling logic; every
 line is derived from `orchestrate.js --plan` output and config): before launching any
@@ -722,9 +786,11 @@ running, each lifecycle event — member started, member finished (`ok` / `crash
 facts recorded in `out/run-status-<date>.json`, shown live. `--plan` prints the plan,
 estimate, and scope preview and exits: zero model-token spend, zero writes.
 
-**First-run confirmation gate:** when `.nightwatch/state.json` does not exist *and*
-the session is interactive, the orchestrator asks one yes/no after showing the plan,
-before launching members. Declining stops before any subagent launch and before any
+**First-run confirmation gate:** when no cadence cursors exist
+(`runtime/cursors.json`, legacy `state.json`) **and** no ledger exists — a repo with a
+ledger is an existing install whose disposable runtime was merely deleted, not a first
+run — *and* the session is interactive, the orchestrator asks one yes/no after showing
+the plan, before launching members. Declining stops before any subagent launch and before any
 write. `--force` (or `--yes`) skips the gate. Scheduled/unattended runs never prompt —
 the constrained permission profile (safety rules below) always wins; if the
 environment cannot prompt, proceed. From the second run onward there is no gate. On
@@ -754,8 +820,10 @@ installation is ever suggested; writes both declaration files (`.nightwatch/STAT
 file (the ~15-line §2.4 tier map, from `templates/nightwatch-readme.md`; recreated by
 `init` if deleted, never written overnight), and registers a nested `.nightwatch/.gitignore`
 (never touching the repo's root `.gitignore`); when a legacy root `STATE.md`/`RELEASE.md`
-is present, offers a one-time, human-confirmed, byte-preserving migration into
-`.nightwatch/`; presents the plan, estimate, and scope preview and asks the first-run
+is present — or a legacy runtime layout (`state.json`, top-level `out/`) — offers a
+one-time, human-confirmed, content-preserving migration into `.nightwatch/` (and into
+`runtime/cursors.json` / `runtime/out/`, rewriting the nested `.gitignore` to ignore
+`runtime/`); presents the plan, estimate, and scope preview and asks the first-run
 confirmation (this is where most users pay their first full budget); runs each job once as an
 **initial validation run** (a full `--force` write run — not the deferred signals-only
 `--dry-run`); shows the first brief.
@@ -771,28 +839,46 @@ Overnight mode never creates or edits declaration files, never reclassifies scop
 installs anything.
 
 **Brief assembly** (`collect-brief.js` — deterministic, because truncation must be
-mechanical; ranking *within* jobs is the jobs' judgment). The brief is composed for a
-**30-second read**: status, one first action, and the release position land before any
-evidence, id, or degraded notice (design input: `docs/prototypes/MORNING-2026-07-10.md`;
-spec: `docs/specs/brief-composition.md`):
+mechanical; ranking *within* jobs is the jobs' judgment). The brief is composed
+**roadmap-first** under the §2.9 objective (*productive work within 3 minutes*):
+orientation — what you finished, where you are on the road — precedes triage, and
+everything above the fold serves it (design inputs:
+`docs/prototypes/MORNING-2026-07-11.md` + round-2 feedback; spec:
+`docs/specs/brief-roadmap-composition.md`, superseding `brief-composition.md`'s order):
 
-- **Composition, in order:** title + date → **status line** → `## ▶ First action`
-  (exactly one) → `## If you have energy after that` (remaining actions,
-  interleave-priority order) → `## Where you stand` (release position: the done/total
-  ratio and target, remaining criterion titles, a pointer to the tracker — never the
-  tracker's status-entry text) → fold marker (*"Everything below is supporting detail.
-  You can stop reading here."*) → `## Details` (per-finding evidence, severities,
-  human-visible ids, anchors; the ids-only overflow appendix closes it) →
-  `## Machine notes — nothing to act on` (degraded notices including which extractor
-  adapters ran, were skipped, or crashed; zero-finding jobs; the scope line) → footer.
+- **Composition, in order (each section's reader question is declared in the spec):**
+  title + date → **status line** ("is anything on fire?") → `## Since yesterday`
+  ("what did I just finish?" — merges/commits since the previous brief, tracker items
+  completed, milestone movement, findings **resolved**; one-line form on a no-change
+  night) → `## The road to release` ("what's the goal, where am I, what's next?" — the
+  §5 journey payload compacted: goal verbatim and attributed, ✓ ▶ ○ milestones with the
+  current one tagged *you are here*, next and following always visible, the waivable
+  hygiene gate labeled, one **Blocking the release:** line; falls back to the
+  ratio-plus-remaining-titles rendering with a setup nudge when no `milestones:` is
+  declared, and to the run-`/release-progress` hint with no tracker) → `## ▶ First
+  action` (exactly one; one affordance line at first use: *"Tick `[x]` when done, `[-]`
+  to dismiss — Nightwatch reads it back."*) → `## If you have energy after that` →
+  fold marker (*"Everything below is supporting detail. You can stop reading here."*) →
+  `## Details` (**work briefings** per action — what to change / why / expected outcome
+  and verification — then the finding appendix: evidence, severities, human-visible
+  ids, anchors, and the ids-only overflow) → `## Machine notes — nothing to act on`
+  (degraded notices including which extractor adapters ran/skipped/crashed;
+  zero-finding jobs; the lifecycle arithmetic line; probe/nudge lines; the scope line)
+  → footer.
+- **The action sections render the OPEN finding set** (finding-lifecycle P1) — open
+  findings stay in the brief with a freshness suffix (re-observed / evidence still
+  present / not re-examined since DATE) until resolved or dismissed; resolved findings
+  appear once under Since yesterday. `caps.brief_total` applies to the open set.
 - **Status line, derived from counts:** blockers > 0 → "**N release blocker(s).**";
   else decisions > 0 → "**N decision(s) need you.** Nothing else is blocking."; else →
   "**Quiet night.**" plus one clause naming what waits (or "Nothing needs you today."
   at zero findings). A crashed or timed-out member is named in the status line, never
   only below the fold.
 - **First-action selection is mechanical:** interleave priority class → severity →
-  lowest `effort_min` (absent sorts last) → id. A `human-decision` finding is an
-  action too ("Decide: …").
+  **advances-the-current-milestone** (boolean, from the tracker's finding↔criteria
+  cross-reference) → lowest `effort_min` (absent sorts last) → id. A `human-decision`
+  finding is an action too ("Decide: …"). Action lines name — in words — the milestone
+  they advance (W3/W4) and are self-contained for a reader who forgot yesterday (W7).
 - **Action lines** render from `next_step` (§2.5): checkbox, bold verb-first summary,
   `~N min` when estimated, the copy-pasteable command when present, at most one
   plain-language sentence of why, an anchor link into Details. Finding ids appear on
@@ -846,7 +932,8 @@ them by contract and its prompt restates them):**
 - Write surface, exhaustively: `.nightwatch/**` (which now holds `STATE.md`, `RELEASE.md`
   by default, `config.yaml`, `.gitignore`, briefs, ledger, state, and `out/`), the
   configured `release_path` when set outside `.nightwatch/` (markdown tracking backend),
-  patch files under `out/`, and (opt-in) `nightwatch/*` branches via temporary worktree.
+  patch files under `runtime/out/` (per-finding named; preserved while their finding is
+  open — finding-lifecycle P5), and (opt-in) `nightwatch/*` branches via temporary worktree.
   Nothing else, ever — never the user's current branch or working tree, and never the
   project's root `.gitignore`. `init` migration moves a legacy root `STATE.md`/`RELEASE.md`
   only with the human's confirmation. A non-markdown tracking backend's write surface is
@@ -854,14 +941,17 @@ them by contract and its prompt restates them):**
 - Never pushes, never creates PRs or issues, never posts externally; **no network** —
   which includes never fetching or installing analyzer tools (§2.6); absence
   degrades, it never triggers a download.
-- Idempotent per date: a second same-night invocation sees `state.json` plus the
-  dated brief and exits without re-spending tokens (`--force` to override).
+- Idempotent per date: a second same-night invocation sees the cadence cursors
+  (`runtime/cursors.json`) plus the dated brief and exits without re-spending tokens
+  (`--force` to override). A forced re-run always leaves a ledger trace — run and
+  classification rows marked `forced: true`, never swallowed by the same-date guard —
+  and never deletes a patch whose finding is still open (finding-lifecycle P5/P6).
 - Runs under a constrained permission profile in which prompts are impossible, not
   rare — unattended is precisely when a prompt cannot be answered.
 
 **Failure handling:** repo is not a git checkout → abort with a one-line stub brief;
 member job exceeds `timeout_minutes` → killed, noted, next job proceeds; the brief
-collector itself fails → raw findings JSON remains in `out/` and a stub brief names
+collector itself fails → raw findings JSON remains in `runtime/out/` and a stub brief names
 the failure. No brief at all is itself a signal; the collector always attempts a stub.
 
 **Acceptance criteria:**
@@ -882,9 +972,10 @@ the failure. No brief at all is itself a signal; the collector always attempts a
       with `NIGHTWATCH_ROOT` set.
 - [ ] Interactive run prints plan + estimate + scope preview before any subagent
       launches; `--plan` exits with zero model-token spend and zero writes.
-- [ ] First run (no `state.json`), interactive: declining the gate launches nothing
-      and writes nothing. Scheduled run on the same repo: no prompt, byte-identical
-      behavior to the ungated orchestrator.
+- [ ] First run (no cadence cursors and no ledger), interactive: declining the gate
+      launches nothing and writes nothing. Scheduled run on the same repo: no prompt,
+      byte-identical behavior to the ungated orchestrator. Deleting `runtime/` on a
+      repo that has a ledger does NOT re-arm the gate.
 - [ ] `review` mode: each decision produces exactly one ledger feedback row and the
       matching checkbox update; review-then-backfill and backfill-then-review record
       no duplicates; quitting mid-review preserves recorded decisions.
@@ -917,22 +1008,37 @@ the failure. No brief at all is itself a signal; the collector always attempts a
       product scope, `ignore`, or `dev_tooling`: exactly one drift finding names it and
       points at `init --update`; multiple such directories render as one bundled action
       covering all of them; a fully-classified repo emits none.
-- [ ] Brief composition: status line first; exactly one First action (with its
-      copy-pasteable command when the finding carries one); remaining actions follow in
-      interleave-priority order; evidence and human-visible finding ids appear only
-      below the fold marker; degraded notices and the scope line render under
+- [ ] Brief composition (roadmap-first): status line, `Since yesterday`, `The road to
+      release`, and exactly one First action (with its copy-pasteable command when the
+      finding carries one, and an affordance line at first use) all render above the
+      fold, in that order; evidence and human-visible finding ids appear only below the
+      fold; Details opens with per-action work briefings; degraded notices, the
+      lifecycle arithmetic line, probe/nudge lines, and the scope line render under
       "Machine notes — nothing to act on"; findings without `next_step` render from
       titles with no blank sections and no crash.
+- [ ] The action sections render the open finding set: a finding open from a previous
+      run and not re-observed tonight still renders with its freshness suffix — never a
+      "0 findings" brief over a non-empty open set; a resolved finding moves to `Since
+      yesterday` and out of the actions; a no-milestones repo renders the road's
+      ratio-fallback plus one setup nudge.
+- [ ] Forced same-date re-run: ledger rows appended with `forced: true`; the patch of a
+      still-open finding survives (or is regenerated) and the brief's apply command
+      points at an existing file.
+- [ ] Memory probe and layout nudge: a repo whose `.gitignore` ignores the ledger emits
+      exactly one setup finding naming file, consequence, and fix; an install missing
+      the orientation README (or on legacy runtime paths) gets exactly one Machine-notes
+      nudge; a current, correctly-configured install gets neither.
 - [ ] Zero blockers and zero decisions → the status line reads "Quiet night…"; the same
       inputs plus one severity-1 finding flip it to name the blocker — derived from
       counts alone, byte-deterministic.
 - [ ] Marking a bundled action `[x]` backfills exactly one feedback row per covered id;
       a subsequent backfill or `review` pass records no duplicates, in any interleaving
       with manual edits.
-- [ ] A fresh `init` writes `.nightwatch/README.md` from the template and overnight runs
-      never write it; `RELEASE.md` serializes in reader-side section order with trailing
-      ids, reads legacy-order files correctly, and byte-preserves Notes across the
-      reorder.
+- [ ] A fresh `init` writes `.nightwatch/README.md` (four-column map) from the template
+      and overnight runs never write it; `RELEASE.md` serializes in journey order (the
+      road first) with trailing ids, reads files in either legacy order correctly, and
+      byte-preserves Notes across the reorder; milestone marks re-derive from criteria
+      state every run.
 
 ---
 
@@ -948,9 +1054,14 @@ authority:
 phase: prototype            # prototype | building | hardening | released
 release:
   target: "v0.1 public release"
-  definition_of_done:
+  definition_of_done:       # unordered criteria (as today)
     - "quickstart reproduces on a fresh clone in 15 minutes"
     - "all commands have specs and the reconciler reports 0 drift"
+  milestones:               # optional, ORDERED — the journey the road renders; each
+    - name: "Quickstart proven"                    # references DoD items by exact text
+      criteria: ["quickstart reproduces on a fresh clone in 15 minutes"]
+    - name: "Specs and code agree"
+      criteria: ["all commands have specs and the reconciler reports 0 drift"]
 ```
 
 **`config.yaml`** — every key optional; defaults shown are the shipped defaults:
@@ -978,6 +1089,8 @@ release_path: .nightwatch/RELEASE.md   # where the release report lives; set "RE
 layers: []                  # e.g. [{name: core, path: "src/core/**", may_depend_on: []}]
                             # compiled into each available tool's native ruleset (§2.6)
 release_checks: {disable: []}
+recheck_budget: 0.15        # fraction of each job's budget reserved (before new discovery)
+                            # for judgment rechecks of open findings (finding-lifecycle P3)
 patch_branch: false         # true → also apply derived-doc patches on nightwatch/* branches
 timeout_minutes: 30
 ```
@@ -985,9 +1098,11 @@ timeout_minutes: 30
 **`RELEASE.md`** (instantiated at `release_path`, default `.nightwatch/RELEASE.md`) — the §5 skeleton with empty sections and the Notes guard comment.
 
 **`nightwatch-readme.md`** (instantiated to `.nightwatch/README.md` by `init`) — the
-~15-line orientation file: the §2.4 tier map (*read (morning)* / *edit (daytime)* /
-*machine memory (never open)*), one line per file, so the layout explains itself at the
-point of encounter.
+orientation file: the four-column map per file (*edit? / owner / safe to delete? /
+committed?*) grouped by the §2.4 tiers, including the two deletion subtleties (deleting
+`runtime/` only resets cadence; deleting `ledger.jsonl` destroys memory) and the
+`STATE.md`/`cursors.json` disarming line, so the layout explains itself at the point of
+encounter (runtime-layout P5).
 
 ---
 

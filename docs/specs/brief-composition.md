@@ -3,6 +3,13 @@
 - **Status:** accepted 2026-07-10 — **folded into `nightwatch.md`** §2.5 (findings contract:
   `next_step`), §6 (brief assembly, morning feedback loop, `review` mode, acceptance criteria).
   **FR assignment deferred** to the BMAD planning-artifacts update (not yet generated).
+- **Superseded in part 2026-07-11 by
+  [brief-roadmap-composition](brief-roadmap-composition.md):** P2's section order and
+  P6's "Where you stand" block are replaced (roadmap-first composition; the road absorbs
+  the release position, and the ratio rendering survives only as the no-milestones
+  fallback). P1 (`next_step`), P3–P5 (selection, status line, action grammar), and
+  P7–P8 (bundling, fan-out) remain in force, with one tiebreak inserted into P3's
+  selection order.
 - **Motivated by:** dogfooding findings
   [0016 — Morning brief is generated well but not yet usable](../dogfooding/0016-morning-brief-usability.md)
   and [0017 — Output file descriptions](../dogfooding/0017-output-file-descriptions.md).

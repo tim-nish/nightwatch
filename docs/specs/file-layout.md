@@ -3,6 +3,11 @@
 - **Status:** accepted 2026-07-10 — **folded into `nightwatch.md`** §2.2, §2.4, §2.7, §5, §6
   (safety rules), and §7 (FR48–FR50 in the epics requirements inventory). Implementation
   pending (Epic 7 candidate).
+- **Refined 2026-07-11 by [runtime-layout](runtime-layout.md):** disposable state moves
+  under `.nightwatch/runtime/` (`cursors.json`, formerly `state.json`, plus `out/`),
+  gitignored as a unit, with legacy-path fallback reads and the same `init`-confirmed
+  migration discipline this spec established. The single-home invariant and all
+  backward-compatibility rules here remain in force.
 - **Motivated by:** dogfooding finding
   [0008 — Root-artifact footprint](../dogfooding/0008-root-artifact-footprint.md)
 - **Scope:** *where* Nightwatch writes its artifacts, and a backward-compatible migration to a
