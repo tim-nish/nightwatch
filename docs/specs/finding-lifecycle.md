@@ -1,13 +1,18 @@
 # Spec: Finding lifecycle — open findings never vanish silently; `--force` never destroys evidence
 
 - **Status:** accepted 2026-07-11 — **folded into `nightwatch.md`** §2.5, §3, §6.
-  **FR assignment deferred.**
+  **FR assignment deferred.** **P7 (run-relative open set & staged run rows)** is a
+  second-round addition from findings 0032 and 0034 item 5 — **accepted 2026-07-11 and
+  folded into `nightwatch.md` §2.5 (lifecycle contract)**; implementation pending (see
+  the [0026–0034 triage record](DRAFT-findings-0026-0034-triage.md)).
 - **Motivated by:** dogfooding finding
   [0019 — finding disappearance](../dogfooding/0019-finding-disappearance.md) (the
   RC-615fba forensics: unfixed drift vanished from the brief, its staged patch was
-  destroyed by a forced re-run, and the ledger recorded nothing). Re-verification depth
-  chosen by the maintainer 2026-07-11: **deterministic floor + budgeted judgment
-  recheck**.
+  destroyed by a forced re-run, and the ledger recorded nothing); P7 by
+  [0032 — first-run lifecycle mislabels](../dogfooding/0032-first-run-lifecycle-mislabels.md)
+  and [0034 — contract drift](../dogfooding/0034-member-command-contract-drift.md)
+  (item 5). Re-verification depth chosen by the maintainer 2026-07-11: **deterministic
+  floor + budgeted judgment recheck**.
 - **Scope:** the lifecycle of a finding after its first appearance — carry-forward,
   per-run classification, re-verification, proposal-artifact preservation, and
   forced-re-run ledger semantics. Finding ids, dedupe, verification-before-brief, and
@@ -87,6 +92,30 @@ still dedupe by id, and P1's classification rows are written exactly once per (i
 date, run-ordinal). The 0019 case — a re-run the ledger never heard about — becomes
 structurally impossible; brief and ledger cannot disagree silently.
 
+## P7 — Run-relative open set & staged run rows *(proposed 2026-07-11)*
+
+P1's classification is defined **relative to the runs that came before tonight**, and the
+first observed violation (0032) showed the boundary must be explicit: member jobs append
+finding rows during the night, so a collector that builds the incoming open set from the
+whole ledger classifies tonight's brand-new findings as `re-observed` — every finding on
+product-lab's *first brief ever* rendered "_(seen again tonight)_" with a lifecycle line
+of "8 re-observed."
+
+**P7.1 — The incoming open set excludes the current run's rows.** Open-set construction
+keys on run identity, not date alone (so `--force` re-runs — P6 — stay correct): rows
+written by tonight's run ordinal are *outputs* of the night, never *inputs* to its
+classification. Corollary, stated as its own invariant: **on a repo's first run the
+incoming open set is empty and every finding classifies as new** — no freshness suffix,
+lifecycle arithmetic "N new, 0 re-observed."
+
+**P7.2 — One run row per (job, date, ordinal), recorded after judgment.** The observed
+double-append (0034.5: the CLI auto-records `findings: 0` before the judgment layer
+produces the night's findings, and the corrected row then needs `forced: true`) is
+resolved by staging: the deterministic CLI records signals but **not** the run row; the
+sole sanctioned run-row append happens once, after the owning job's judgment completes,
+carrying the real findings count. Until implemented, consumers treat the **last** row per
+(job, date, ordinal) as authoritative — but the staged write is the contract.
+
 ## Non-goals
 
 - No change to finding ids, the findings JSON schema beyond the new lifecycle rows'
@@ -113,6 +142,10 @@ structurally impossible; brief and ledger cannot disagree silently.
 5. A forced re-run appends `forced: true` run rows and classification rows exactly once;
    re-running unforced the same night appends nothing (idempotency preserved).
 6. Lifecycle output is byte-deterministic for identical inputs (NFR8).
+7. *(P7, proposed)* A repo's first brief renders every finding with no freshness suffix
+   and the lifecycle line "N new, 0 re-observed"; a same-night forced re-run still
+   classifies against the pre-tonight open set; the ledger holds exactly one
+   authoritative run row per (job, date, ordinal), written after judgment.
 
 ## Tests
 

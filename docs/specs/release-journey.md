@@ -5,11 +5,17 @@
   **FR assignment deferred.** The journey prototype
   ([`RELEASE-2026-07-11.md`](../prototypes/RELEASE-2026-07-11.md)) has **not yet had its
   timed cold read** — its road structure mirrors the MORNING road the maintainer
-  validated; the cold read remains a dogfooding acceptance step (harness AC6).
+  validated; the cold read remains a dogfooding acceptance step (harness AC6). **P4
+  (single matching authority)** is a second-round addition from finding 0033 — **accepted
+  2026-07-11 and folded into `nightwatch.md` §5 (procedure steps 4–5) and §7 (STATE.md
+  template)**; implementation pending (see the
+  [0026–0034 triage record](DRAFT-findings-0026-0034-triage.md)); it exists because the
+  "journey ↔ brief road consistency" test below was violated on the first outside repo.
 - **Motivated by:** dogfooding finding
   [0021 — milestone roadmap](../dogfooding/0021-release-md-milestone-roadmap.md); the
   `milestones:` mechanism chosen by the maintainer 2026-07-11 (explicit key; DoD stays
-  unordered).
+  unordered); P4 by
+  [0033 — two roads disagree](../dogfooding/0033-two-roads-disagree.md).
 - **Governed by:** [writing-harness](writing-harness.md) — objective: *goal, current
   milestone, next milestone stateable within 1 minute*; W-rules apply throughout;
   status entries follow harness P6.
@@ -107,6 +113,41 @@ after Next actions so a waiting decision is never below history.
 - Next actions are written per W3/W4: each names the milestone it advances and what
   closing it unlocks.
 
+## P4 — Single matching authority: one criterion→done map, both roads consume it *(proposed 2026-07-11)*
+
+Observed violation (0033): on product-lab's first night, RELEASE.md marked milestone 1
+**✓ done** (the judgment layer fuzzy-matched paraphrased criteria and said so in
+`degraded` + a setup finding), while the same night's brief road showed it **"▶ — you
+are here"** — the collector's `deriveJourney` re-matched raw criterion text strictly and
+found nothing. Two renderers, two matching rules, one declared journey.
+
+**P4.1 — release-progress persists the resolved criterion→done map.** The owning job
+records, per criterion, `{criterion, done, evidence, match: exact | resolved}` into its
+findings JSON/tracker output. Judgment may still resolve a paraphrase (stating it, as
+tonight's run correctly did) — but the *resolution* becomes recorded fact.
+
+**P4.2 — Downstream renderers consume the recorded map, never re-match raw text.**
+`deriveJourney` (brief road) takes the persisted map as its `isDone`; the deterministic
+collector stays deterministic — it reads recorded facts. The existing "journey ↔ brief
+road consistency" test becomes structural: divergence is impossible, not merely tested.
+
+**P4.3 — No map → degrade loudly, never render a wrong mark.** When the map is absent
+(release-progress crashed or predates P4) and exact-text matching fails, the road renders
+the milestone state as unavailable — *"milestone state unavailable: criteria don't match
+`definition_of_done` (see the setup finding)"* — instead of silently showing ▶ at the
+wrong milestone.
+
+**P4.4 — Criteria are correct-by-construction at drafting.** Every flow that drafts
+`milestones:` (`init`, `init --update`'s offer in P1) copies DoD text **verbatim** into
+`criteria`; P1's validation runs at write time, so a paraphrase mismatch is caught at the
+one moment a human is present, not by the first night's setup finding.
+
+**P4.5 — The finish line follows the declared target.** The road's terminal line renders
+*"🏁 Declare **<target>** done."* by default; the "Tag the release." wording renders only
+when a version/tag release check is enabled — an operational target (product-lab's "Q&A
+gateway v1 operational") never reads as a shipping ritual. Applies to both RELEASE.md
+(P2) and the brief road, which inherit it from the same template text.
+
 ## Supersession map
 
 | Prior rule | Disposition |
@@ -141,6 +182,13 @@ after Next actions so a waiting decision is never below history.
 6. Every "What changed lately" entry opens with impact-on-reader (harness P6), verified
    on change / no-change / regression fixtures.
 7. Identical inputs → byte-identical document (NFR8).
+8. *(P4, proposed)* Any declaration whose milestone criteria are not byte-equal to their
+   DoD entries renders the **same** milestone marks in RELEASE.md and the brief road
+   (both consume the persisted criterion→done map); with the map removed, the brief road
+   degrades to "milestone state unavailable" rather than showing a mark; `init`-drafted
+   `criteria` are byte-equal to their DoD entries; a declared non-shipping target renders
+   "Declare <target> done." as the finish line. *(Regression fixture: the product-lab
+   2026-07-11 replay — RELEASE.md ✓ vs brief ▶ on milestone 1.)*
 
 ## Tests
 
