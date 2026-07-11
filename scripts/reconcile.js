@@ -76,6 +76,41 @@ function unifiedDiffDelete(relPath, text, deleteLines1) {
   return `--- a/${relPath}\n+++ b/${relPath}\n` + body;
 }
 
+/**
+ * Coverage drift — the ADDITIVE direction (FR97): a command/skill file the surface inventory
+ * knows about that the `derived` usage artifact never mentions. The mechanical patch surface is
+ * delete-only by design (spec reconcile-patch-workflow P3, maintainer Decision 2 2026-07-11), so
+ * an additive fix is NEVER drafted as a patch: each gap becomes a `human-decision` finding whose
+ * body carries the proposed text (`proposal`) for the human to apply. Runs only when the usage
+ * artifact is declared `derived` — only then does "the doc must document every command" hold.
+ * Deterministic: command files sorted, word-boundary mention check, stable per-command loci.
+ * @param {string} docPath repo-relative path of the derived usage artifact (e.g. README.md)
+ * @param {string} docText its content
+ * @param {string[]} commandFiles surface-inventory command/skill files
+ * @returns {any[]} unverified drift findings (the adversarial pass stamps survivors)
+ */
+function coverageDriftFindings(docPath, docText, commandFiles) {
+  const out = [];
+  for (const file of [...commandFiles].sort()) {
+    const name = path.basename(file).replace(/\.md$/i, '');
+    if (/^readme$/i.test(name)) continue; // a commands-dir README is not a command
+    // Word-boundary mention check ("ask" must not match "task"); hyphenated names stay whole.
+    const mentioned = new RegExp(`(^|[^\\w-])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\w-]|$)`, 'i').test(docText);
+    if (mentioned) continue;
+    out.push(makeFinding('repo-reconcile', {
+      kind: 'drift', severity: 3, action: 'human-decision', verified: false,
+      title: `derived ${docPath} does not document command "${name}" (${file})`,
+      locus: `coverage:${docPath}:${name}`,
+      evidence: [{ path: file }, { path: docPath }],
+      extra: {
+        direction: docPath,
+        proposal: `Document \`${name}\` in ${docPath} (source: ${file}). Additive change — the mechanical patch surface is delete-only (FR97); apply this addition yourself.`,
+      },
+    }));
+  }
+  return out;
+}
+
 /** Flags the docs claim exist. Verdict from whether the code surface actually exposes them. */
 function extractFlagClaims(docPath, text, codeFlags) {
   const claims = [];
@@ -352,6 +387,16 @@ function reconcile(root, opts = {}) {
       unverifiable.push({ kind: c.kind, text: c.text, source: c.source, reason: 'needs a live run / deeper analysis' });
     }
   }
+  // Additive-direction coverage drift (FR97): only when the README is DECLARED derived — the
+  // "usage doc must document every command" obligation flows from that declaration alone. These
+  // findings never enter pendingPatch, so no patch can exist for an addition by construction.
+  if (readmePath && !detectionOnly) {
+    const auth = authorityFor(authority, readmePath);
+    if (auth && auth.role === 'derived' && Array.isArray(inv.command_files) && inv.command_files.length) {
+      const text = readFileSafe(path.join(root, readmePath)) || '';
+      drift.push(...coverageDriftFindings(readmePath, text, inv.command_files));
+    }
+  }
   drift.sort((a, b) => a.severity - b.severity || a.id.localeCompare(b.id)); // 1=worst first (FR91)
 
   // Adversarial verification pass (FR22): a refuting reviewer challenges each drifted verdict.
@@ -397,7 +442,10 @@ function reconcile(root, opts = {}) {
   }
 
   // Draft the patches (derived artifacts only). NEVER touches a repo file in place — a patch is
-  // written under runtime/out and is the sole fix mechanism (FR20, normative safety rule). Two
+  // written under runtime/out and is the sole fix mechanism (FR20, normative safety rule), and the
+  // surface is DELETE-ONLY by design (FR97): unifiedDiffDelete is the only diff builder, and only
+  // pendingPatch entries (deletion drift) reach it — additive/modifying drift became human-decision
+  // findings above and can never produce a patch file. Two
   // artifacts are produced (spec finding-lifecycle P5):
   //   - one patch file PER FINDING, `reconcile-<date>-<id>.patch`, so it survives a same-date
   //     rewrite while its finding is open and is GC-addressable by id once the finding closes; this

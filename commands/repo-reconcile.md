@@ -50,11 +50,19 @@ a broken build outranks all drift.
    never patched). The deterministic harness (`${NW_ROOT}/scripts/reconcile.js`) drives the pass
    and applies the survivor/drop rule; the refutation itself is your judgment.
 5. Direction of fix, from the authority role of the artifact the claim lives in:
-   - `role: derived` (e.g. README follows code) → mechanically fixable. Generate a unified-diff
-     **patch file** at `.nightwatch/out/reconcile-<date>.patch`. Patch files are the default and
-     only mechanism. If config `patch_branch: true`, *additionally* apply the patch on branch
-     `nightwatch/reconcile/<date>` created in a **temporary git worktree** — the user's working
-     tree and checked-out branch are never touched. Finding `action: patch-available`.
+   - `role: derived` (e.g. README follows code) **and the fix is a pure deletion** (stale text
+     whose source is gone) → mechanically fixable. Generate a unified-diff **patch file** at
+     `.nightwatch/out/reconcile-<date>.patch`. **The mechanical patch surface is delete-only by
+     design** (spec `docs/specs/reconcile-patch-workflow.md` P3, FR97): patch files are the
+     default and only mechanism *for deletion drift*, no other patch-authoring path exists, and
+     you never hand-assemble a diff for any other change. If config `patch_branch: true`,
+     *additionally* apply the patch on branch `nightwatch/reconcile/<date>` created in a
+     **temporary git worktree** — the user's working tree and checked-out branch are never
+     touched. Finding `action: patch-available`.
+   - `role: derived` with **additive or modifying** drift (e.g. a command file the derived README
+     never documents) → `action: human-decision`. The finding carries the proposed text as
+     proposal content in its body (`proposal` field) for the human to apply themselves — **no
+     patch file is ever written for an addition or modification** (FR97).
    - `role: authoritative` → a conflict is a bug or an unrecorded decision:
      `action: human-decision`, and **no patch is ever drafted in either direction**.
    - authority undeclared → `action: human-decision` with direction omitted.
