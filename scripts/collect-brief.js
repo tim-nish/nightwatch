@@ -11,7 +11,7 @@ const yaml = require('js-yaml');
 const { parseArgs, repoRoot, todayISO, nwDir, outDir, outReadPath, ensureDir, readFileSafe, readJSONSafe, exists, progressPercent, git } = require('./lib/util');
 const { readAllFindings } = require('./lib/findings');
 const { openTracker, releaseReadPath } = require('./lib/tracker');
-const { classifyOpenFindings, newClassificationRows, floorClassifier, runOrdinal, gcPatches } = require('./lib/lifecycle');
+const { classifyOpenFindings, newClassificationRows, floorClassifier, runOrdinal, gcPatches, lifecycleCounts } = require('./lib/lifecycle');
 const { loadConfig } = require('./lib/config');
 const { excludedTopDirs, unclassifiedTopDirs } = require('./lib/scope');
 const { commitPolicyProbe, layoutUpgradeNudge } = require('./lib/probe');
@@ -61,6 +61,18 @@ function effortKey(f) {
   return typeof e === 'number' ? e : Infinity;
 }
 
+// Freshness suffix from the finding lifecycle (spec brief-roadmap-composition P4): a carried-forward
+// open finding says how it was re-examined, so an unresolved finding is visibly held rather than
+// silently vanishing. Brand-new findings (not in the open set coming in) carry no suffix.
+function freshnessSuffix(f, clsById, openById) {
+  if (!openById.has(f.id)) return '';
+  const cls = clsById.get(f.id);
+  if (cls === 're-observed') return ' _(seen again tonight)_';
+  if (cls === 'still-open') return ' _(evidence still present)_';
+  if (cls === 'not-re-examined') { const o = openById.get(f.id); return ` _(not re-examined since ${(o && o.firstDate) || 'earlier'})_`; }
+  return '';
+}
+
 // Group the (already-sorted, already-capped) shown findings into action-line groups (FR59, spec P7):
 // findings whose `next_step.command` is BYTE-IDENTICAL merge into one group; every other finding
 // (distinct command, or no command at all) is its own singleton group. Exact string equality only —
@@ -101,15 +113,16 @@ function renderActionLine(group, lines) {
   const anchor = `→ [details](#${detailsAnchor(f)})`;
   const why = (ns.summary && f.title && f.title !== ns.summary) ? ` ${f.title.replace(/\s+$/, '')}.` : '';
   const count = group.length > 1 ? ` (${group.length} items)` : '';
+  const fresh = f._fresh || ''; // lifecycle freshness suffix (spec brief-roadmap-composition P4)
   const summary = `${actionSummary(f)}${count}`;
   // The id manifest is invisible in rendered Markdown but is how backfill/review map a checked box
   // back to its finding(s) (feedback.js) — a comma-separated list, in first-occurrence order, so one
   // bundled checkbox fans out to every covered id (FR60).
   const ids = `<!-- ids: ${group.map((g) => g.id).join(', ')} -->`;
   if (ns.command) {
-    lines.push(`- [ ] **${summary}**${effort}: ${ids}`, '', `      ${ns.command}`, '', `  ${why ? why.trim() + ' ' : ''}${anchor}`);
+    lines.push(`- [ ] **${summary}**${effort}${fresh}: ${ids}`, '', `      ${ns.command}`, '', `  ${why ? why.trim() + ' ' : ''}${anchor}`);
   } else {
-    lines.push(`- [ ] **${summary}**${effort}.${why} ${anchor} ${ids}`);
+    lines.push(`- [ ] **${summary}**${effort}${fresh}.${why} ${anchor} ${ids}`);
   }
 }
 
@@ -332,6 +345,7 @@ function collect(root, date, { force = false } = {}) {
   const gcCandidates = gcPatches(root, closedIds, { remove: false }); // read-only preview for the note
 
   // Gather eligible findings tagged with source job + class.
+  /** @type {any[]} */
   const all = [];
   const degradedNotices = [];
   for (const doc of docs) {
@@ -341,9 +355,38 @@ function collect(root, date, { force = false } = {}) {
   // The commit-policy probe finding (computed above) enters the brief like any other — setup ranks
   // near the top, and it is recorded in the ledger with a stable id so it recurs rather than re-reports.
   if (probeFinding) all.push({ ...probeFinding, job: 'nightwatch', _cls: classify(probeFinding) });
-  // Global ranking for the cap and first-action selection (FR57): priority class → severity →
-  // lowest effort (absent last) → id. Fully deterministic (NFR8).
-  all.sort((a, b) => a._cls.rank - b._cls.rank || a.severity - b.severity || effortKey(a) - effortKey(b) || a.id.localeCompare(b.id));
+
+  // The brief renders the OPEN finding set, not only tonight's docs (spec brief-roadmap-composition
+  // P4, finding-lifecycle P1): a carried-forward open finding not re-observed tonight still surfaces
+  // as an action — it can no longer vanish silently (the RC-615fba failure). Resolved findings exit
+  // to "Since yesterday"; re-observed ones are already in `all` from tonight's docs.
+  const clsById = new Map(lifecycleResults.map((r) => [r.id, r.classification]));
+  const openById = new Map(openBefore.map((o) => [o.id, o]));
+  const shownIds = new Set(all.map((f) => f.id));
+  for (const res of lifecycleResults) {
+    if (res.classification === 'resolved' || res.classification === 're-observed' || shownIds.has(res.id)) continue;
+    const o = openById.get(res.id);
+    if (!o) continue;
+    const title = (o.text && o.text.trim()) || `Re-check carried-forward finding ${o.id}`;
+    all.push({ id: o.id, kind: o.kind || 'drift', severity: o.severity || 3, title, evidence: o.evidence || [], action: 'none', verified: true, job: 'carry-forward', _cls: classify({ kind: o.kind, severity: o.severity, action: 'none' }) });
+  }
+  // Freshness suffix from the lifecycle classification (spec P4): re-observed / evidence still present
+  // / not re-examined since DATE. Rendered on the action line; empty for a brand-new finding.
+  for (const f of all) f._fresh = freshnessSuffix(f, clsById, openById);
+
+  // First-action continuity tiebreak (spec P5): among equals, work that advances the CURRENT
+  // milestone wins — a strict tiebreak insertion after severity, before effort. Deterministic.
+  const doneTitles = new Set(store.listItems().filter((it) => it.status === 'done').map((it) => it.title));
+  const journey = (release && Array.isArray(release.milestones) && release.milestones.length)
+    ? deriveJourney(release, (crit) => doneTitles.has(crit)) : null;
+  const currentCriteria = journey && journey.currentIndex >= 0
+    ? new Set(journey.milestones[journey.currentIndex].criteria) : new Set();
+  const advancesRank = (f) => (currentCriteria.has(f.title) || (f.evidence || []).some((e) => currentCriteria.has(e.path)) ? 0 : 1);
+
+  // Global ranking for the cap and first-action selection (spec P5): priority class → severity →
+  // advances-the-current-milestone → lowest effort (absent last) → id. Fully deterministic (NFR8).
+  all.sort((a, b) => a._cls.rank - b._cls.rank || a.severity - b.severity || advancesRank(a) - advancesRank(b) || effortKey(a) - effortKey(b) || a.id.localeCompare(b.id));
+  // caps.brief_total applies to the OPEN set (spec P4); ranking classes and the appendix are unchanged.
   const shown = all.slice(0, cap);
   const overflow = all.slice(cap);
 
@@ -376,7 +419,6 @@ function collect(root, date, { force = false } = {}) {
   // fallback matrix (no tracker → hint; tracker but no milestones → the flat ratio + a nudge).
   const rel = readReleaseHeader(root, config);
   const ratio = releaseRatio(store);
-  const doneTitles = new Set(store.listItems().filter((it) => it.status === 'done').map((it) => it.title));
   L.push('## The road to release');
   renderRoadToRelease(release, rel, ratio, (crit) => doneTitles.has(crit), L);
   L.push('');
@@ -389,6 +431,9 @@ function collect(root, date, { force = false } = {}) {
   // ## ▶ First action — exactly one action line (the top-ranked group, which may be a bundle).
   const first = groups[0] || null;
   L.push('## ▶ First action');
+  // The affordance line, once per document (spec brief-roadmap-composition P6, W6): explains the
+  // feedback checkbox at first use; the footer keeps the full text.
+  if (first) L.push('_Tick `[x]` when done, `[-]` to dismiss — Nightwatch reads it back._');
   if (first) renderActionLine(first, L); else L.push('- Nothing needs you today.');
   L.push('');
 
@@ -431,6 +476,12 @@ function collect(root, date, { force = false } = {}) {
   // because their finding is resolved or dismissed. Byte-deterministic (gcPatches returns sorted).
   if (gcCandidates.length) {
     notes.push(`- Collected ${gcCandidates.length} stale patch${gcCandidates.length === 1 ? '' : 'es'} (finding resolved/dismissed): ${gcCandidates.map((p) => `\`${p}\``).join(', ')}.`);
+  }
+  // Finding-lifecycle arithmetic (spec finding-lifecycle P4 / brief-roadmap-composition P4): one
+  // byte-deterministic line so the open-set bookkeeping is visible and a disappearance is impossible.
+  {
+    const c = lifecycleCounts(lifecycleResults);
+    if (c.open > 0) notes.push(`- Open findings: ${c.open} — ${c['re-observed']} re-observed, ${c.resolved} resolved, ${c['still-open']} still-open, ${c['not-re-examined']} not re-examined.`);
   }
   // Citation integrity (spec writing-harness P5): name every cited number that matches no PR in this
   // repo's git history; those numbers are stripped to `#?` in the brief below. Byte-deterministic.

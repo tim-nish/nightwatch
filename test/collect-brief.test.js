@@ -248,20 +248,25 @@ module.exports = {
   },
 
   // Story 8.3 / FR59, NFR8 — a brief containing a bundle renders byte-identically across two runs.
-  'brief: a brief containing a bundle is byte-deterministic across runs (FR59, NFR8)': () => {
-    const r = tmpRepo();
-    const date = '2000-08-03';
+  'brief: a brief containing a bundle is byte-deterministic for identical inputs (FR59, NFR8)': () => {
     const cmd = 'nightwatch init --update';
-    writeFindings(r, 'repo-reconcile', date, [], [
-      { id: 'RC-d1', kind: 'drift', severity: 2, title: 'd1', evidence: [], action: 'none', verified: true, next_step: { summary: 'Bundle it', command: cmd } },
-      { id: 'RC-d2', kind: 'drift', severity: 2, title: 'd2', evidence: [], action: 'none', verified: true, next_step: { summary: 'Bundle it', command: cmd } },
-      { id: 'RC-d3', kind: 'drift', severity: 2, title: 'd3', evidence: [], action: 'none', verified: true, next_step: { summary: 'Bundle it', command: cmd } },
-    ]);
-    collect(r, date);
-    const first = readFile(r, '.nightwatch/MORNING.md');
+    // Byte-determinism is over IDENTICAL INPUTS: two fresh repos seeded the same render the same brief.
+    // (A second run on the SAME repo is not identical input — the open-set feature reads ledger state
+    // the first run wrote, so a re-observed finding then carries its "(seen again tonight)" suffix.)
+    const mk = () => {
+      const r = tmpRepo();
+      const date = '2000-08-03';
+      writeFindings(r, 'repo-reconcile', date, [], [
+        { id: 'RC-d1', kind: 'drift', severity: 2, title: 'd1', evidence: [], action: 'none', verified: true, next_step: { summary: 'Bundle it', command: cmd } },
+        { id: 'RC-d2', kind: 'drift', severity: 2, title: 'd2', evidence: [], action: 'none', verified: true, next_step: { summary: 'Bundle it', command: cmd } },
+        { id: 'RC-d3', kind: 'drift', severity: 2, title: 'd3', evidence: [], action: 'none', verified: true, next_step: { summary: 'Bundle it', command: cmd } },
+      ]);
+      collect(r, date);
+      return readFile(r, '.nightwatch/MORNING.md');
+    };
+    const first = mk();
     assert.ok(/<!-- ids: RC-d1, RC-d2, RC-d3 -->/.test(first), 'bundle rendered');
-    collect(r, date);
-    assert.strictEqual(readFile(r, '.nightwatch/MORNING.md'), first, 'byte-identical across runs');
+    assert.strictEqual(mk(), first, 'byte-identical for identical inputs');
   },
 
   'brief: global cap enforced, overflow to appendix by priority class': () => {
@@ -416,20 +421,22 @@ module.exports = {
   },
 
   // AC4 — identical input run twice must be byte-deterministic (truncation + ordering).
-  'brief: identical input twice → byte-identical brief': () => {
-    const r = tmpRepo();
+  'brief: identical inputs → byte-identical brief (two fresh repos)': () => {
     const date = '2000-03-05';
-    writeFindings(r, 'repo-reconcile', date, [], [
-      ...mkFindings('repo-reconcile', 30, { kind: 'drift', severity: 3 }),
-      ...mkFindings('repo-reconcile', 10, { kind: 'blocker', severity: 1 }),
-    ]);
-    writeFindings(r, 'arch-review', date, [], mkFindings('arch-review', 20, { kind: 'arch', severity: 4 }));
-    collect(r, date);
-    const first = readFile(r, '.nightwatch/MORNING.md');
-    const firstDated = readFile(r, `.nightwatch/briefs/${date}.md`);
-    collect(r, date);
-    assert.strictEqual(readFile(r, '.nightwatch/MORNING.md'), first, 'MORNING.md byte-identical');
-    assert.strictEqual(readFile(r, `.nightwatch/briefs/${date}.md`), firstDated, 'dated brief byte-identical');
+    const mk = () => {
+      const r = tmpRepo();
+      writeFindings(r, 'repo-reconcile', date, [], [
+        ...mkFindings('repo-reconcile', 30, { kind: 'drift', severity: 3 }),
+        ...mkFindings('repo-reconcile', 10, { kind: 'blocker', severity: 1 }),
+      ]);
+      writeFindings(r, 'arch-review', date, [], mkFindings('arch-review', 20, { kind: 'arch', severity: 4 }));
+      collect(r, date);
+      return [readFile(r, '.nightwatch/MORNING.md'), readFile(r, `.nightwatch/briefs/${date}.md`)];
+    };
+    const [morningA, datedA] = mk();
+    const [morningB, datedB] = mk();
+    assert.strictEqual(morningB, morningA, 'MORNING.md byte-identical for identical inputs');
+    assert.strictEqual(datedB, datedA, 'dated brief byte-identical for identical inputs');
   },
 
   // Story 4.3 / FR32 AC1 — one member crashes: the brief keeps the OTHER jobs' sections and the
