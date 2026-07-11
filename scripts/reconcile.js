@@ -275,7 +275,7 @@ function reconcile(root, opts = {}) {
   // stamped verified so the brief-wide "only verified findings enter the brief" invariant holds.
   if (inv.blocking && inv.blocking.length) {
     const b = inv.blocking[0];
-    const f = makeFinding('repo-reconcile', { kind: 'blocker', severity: 5, action: 'human-decision', verified: true,
+    const f = makeFinding('repo-reconcile', { kind: 'blocker', severity: 1, action: 'human-decision', verified: true,
       title: b.reason, locus: 'surface:blocking', evidence: b.evidence || [], extra: undefined });
     f.recurrence = recurrenceCounts(root).get(f.id) || 0;
     findings.push(f);
@@ -320,7 +320,9 @@ function reconcile(root, opts = {}) {
   const drift = [];
   for (const c of claims) {
     if (c.verdict === 'drifted') {
-      const severity = c.kind === 'command' ? 4 : c.kind === 'flag' ? 3 : 2;
+      // Severity is 1=worst…5=nice-to-have (FR91): a documented-but-nonexistent command outranks a
+      // drifted flag, which outranks a stale prose assertion (spec §3 ranking intent).
+      const severity = c.kind === 'command' ? 2 : c.kind === 'flag' ? 3 : 4;
       const auth = authorityFor(authority, c.source.path);
       let action = 'human-decision';
       let extra;
@@ -350,7 +352,7 @@ function reconcile(root, opts = {}) {
       unverifiable.push({ kind: c.kind, text: c.text, source: c.source, reason: 'needs a live run / deeper analysis' });
     }
   }
-  drift.sort((a, b) => b.severity - a.severity || a.id.localeCompare(b.id));
+  drift.sort((a, b) => a.severity - b.severity || a.id.localeCompare(b.id)); // 1=worst first (FR91)
 
   // Adversarial verification pass (FR22): a refuting reviewer challenges each drifted verdict.
   // Only survivors — stamped verified:true — reach the brief; refuted verdicts are dropped and
@@ -374,7 +376,7 @@ function reconcile(root, opts = {}) {
   // are stamped verified so everything in the brief carries verified:true.
   const setupFindings = [];
   if (detectionOnly) {
-    setupFindings.push(makeFinding('repo-reconcile', { kind: 'setup', severity: 4, action: 'daytime-task', verified: true,
+    setupFindings.push(makeFinding('repo-reconcile', { kind: 'setup', severity: 2, action: 'daytime-task', verified: true,
       title: 'declare authority in STATE.md; run `/nightwatch init`', locus: 'authority:undeclared', evidence: [], extra: undefined }));
     degraded.push('authority undeclared — detection-only mode; findings omit direction-of-fix');
   } else {
@@ -391,7 +393,7 @@ function reconcile(root, opts = {}) {
         degraded.push(`authority pointer "${key}" (${glob}) matches no file — dead pointer`);
       }
     }
-    setupFindings.sort((a, b) => b.severity - a.severity || a.id.localeCompare(b.id));
+    setupFindings.sort((a, b) => a.severity - b.severity || a.id.localeCompare(b.id)); // 1=worst first (FR91)
   }
 
   // Draft the patches (derived artifacts only). NEVER touches a repo file in place — a patch is
