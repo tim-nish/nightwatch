@@ -22,7 +22,7 @@ module.exports = {
     const brief = readFile(r, '.nightwatch/MORNING.md');
     assert.ok(/--flag still documented/.test(brief), 'the carried-forward finding surfaces as an action');
     assert.match(brief, /_\(evidence still present\)_/, 'freshness suffix from the deterministic floor');
-    assert.match(brief, /Open findings: 1 — 0 re-observed, 0 resolved, 1 still-open, 0 not re-examined\./, 'lifecycle arithmetic line');
+    assert.match(brief, /Findings: 0 new, 0 re-observed, 0 resolved, 1 still-open, 0 not re-examined\./, 'lifecycle arithmetic line (FR93: new count)');
   },
 
   // ---- P6: the affordance line under the First action ---------------------------------------

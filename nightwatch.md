@@ -283,9 +283,15 @@ coupled — any job runs standalone, and a partial night degrades cleanly.
   by the current run (keyed on run identity, not date alone), so tonight's rows are
   outputs, never inputs — on a repo's first run the incoming open set is empty and
   every finding classifies as **new** (no freshness suffix; arithmetic "N new,
-  0 re-observed"). The ledger holds exactly **one authoritative run row per (job, date,
-  ordinal)**, appended once after the owning job's judgment completes with the real
-  findings count — never a pre-judgment placeholder (findings 0032/0034).
+  0 re-observed"). **Run-row ownership (FR94):** the ledger holds at most **one
+  authoritative run row per (job, effective run date, `run_ordinal`)**. The **member job's
+  CLI is that row's owner** — it writes it after its own judgment completes, carrying the
+  real finding/candidate count; the collector **never appends a duplicate** when that row
+  already exists, and writes a `synthetic: true` row **only** when no member row exists
+  (a crashed, timed-out, skipped, or standalone-invoked member). `run_ordinal` is the
+  brief-assembly cycle for the date (shared by both writers), so a forced same-date re-run
+  stamps the next ordinal and cannot create two representations of one logical run
+  (findings 0032/0034).
 
 All shared schemas (findings, signals, tracker items) are defined exactly once, as
 JSDoc typedefs in `lib/types.js` (§2.8); every producer and consumer imports them.

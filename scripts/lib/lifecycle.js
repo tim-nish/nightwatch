@@ -29,7 +29,15 @@ const RECHECK_METHODS = ['deterministic', 'judgment', 'skipped'];
  * @param {any[]} rows Ledger rows (from store.readLedger()).
  * @returns {Array<{id: string, kind: string, severity: number, firstDate: string, lastDate: string}>}
  */
-function openFindings(rows) {
+function openFindings(rows, opts = {}) {
+  // Run-relative open set (spec finding-lifecycle P7.1, FR93): a finding row written by the CURRENT
+  // run is an OUTPUT of the night, never an input to its own classification. `excludeDate` drops
+  // every finding row of that date so tonight's findings — including a member CLI's rows appended
+  // before the collector runs — are not mistaken for carried-forward work. A genuinely
+  // carried-forward finding still surfaces via its earlier-dated rows; on a repo's first run the
+  // incoming open set is empty and every finding classifies as new. Keyed on the run's date so a
+  // forced same-date re-run also classifies against the pre-tonight set (not its own rows).
+  const excludeDate = opts.excludeDate || null;
   const closed = new Set();
   for (const r of rows || []) {
     if (!r || !r.id) continue;
@@ -39,6 +47,7 @@ function openFindings(rows) {
   const byId = new Map();
   for (const r of rows || []) {
     if (!r || r.type !== 'finding' || !r.id || closed.has(r.id)) continue;
+    if (excludeDate && r.date === excludeDate) continue;
     const d = r.date || '';
     const cur = byId.get(r.id);
     if (!cur) {

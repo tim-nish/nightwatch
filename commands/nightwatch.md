@@ -317,7 +317,12 @@ declaration the user maintains — a helpful write is still a write.
    This writes `.nightwatch/briefs/<date>.md`, overwrites `.nightwatch/MORNING.md`, appends
    per-job ledger lines, and computes the demotion rule. Fixed section order and the global cap
    `caps.brief_total` (default 25) with interleave priority (blockers > human decisions > drift >
-   arch > nice-to-have) are enforced by the script, not by you.
+   arch > nice-to-have) are enforced by the script, not by you. **Run-row ownership (FR94):** each
+   member CLI already wrote its own authoritative post-judgment run row (one per (job, date,
+   `run_ordinal`), with the real count); the collector does **not** duplicate it and writes a
+   `synthetic: true` row only for a member that produced none (crashed/timed-out/skipped). The
+   incoming open set the collector classifies against is **run-relative** — it excludes tonight's
+   own finding rows (FR93), so a first brief is all-new, never "seen again tonight."
 
 5. **Morning feedback loop.** **Before running the jobs**, backfill last brief's checkbox marks:
    ```

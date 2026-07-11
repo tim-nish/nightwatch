@@ -551,7 +551,7 @@ function openTracker(repo, config) {
       },
       readLedger() { return memLedger.slice(); },
       // The open set carried into a run (spec P1): finding ids with no resolution and no dismissal.
-      openFindings() { return computeOpenFindings(memLedger.slice()); },
+      openFindings(opts) { return computeOpenFindings(memLedger.slice(), opts); },
       flush() { core.markDirty(); return { backend: 'memory' }; },
     });
   }
@@ -615,7 +615,7 @@ function openTracker(repo, config) {
       return r;
     },
     // The open set carried into a run (spec P1): finding ids with no resolution and no dismissal.
-    openFindings() { return computeOpenFindings(this.readLedger()); },
+    openFindings(opts) { return computeOpenFindings(this.readLedger(), opts); },
     // Append a per-run ledger line (the brief collector's per-job summary: date/job/tokens/
     // findings count/degraded flags). A plain object stamped `type:'run'` and written through the
     // store's sole ledger writer, so no consumer needs to touch ledger.jsonl directly (§2.7).

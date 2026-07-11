@@ -108,13 +108,24 @@ classification. Corollary, stated as its own invariant: **on a repo's first run 
 incoming open set is empty and every finding classifies as new** — no freshness suffix,
 lifecycle arithmetic "N new, 0 re-observed."
 
-**P7.2 — One run row per (job, date, ordinal), recorded after judgment.** The observed
-double-append (0034.5: the CLI auto-records `findings: 0` before the judgment layer
-produces the night's findings, and the corrected row then needs `forced: true`) is
-resolved by staging: the deterministic CLI records signals but **not** the run row; the
-sole sanctioned run-row append happens once, after the owning job's judgment completes,
-carrying the real findings count. Until implemented, consumers treat the **last** row per
-(job, date, ordinal) as authoritative — but the staged write is the contract.
+**P7.2 — One authoritative run row per (job, date, ordinal), member-owned.** The observed
+double-append (0034.5: two run rows per (job, date) — the member CLI's and the collector's)
+is resolved by **ownership**, implemented (Story 11.3, FR94):
+
+- The **member job's CLI is the authoritative writer** of its run row — it appends it once,
+  **after its own judgment completes**, carrying the real finding/candidate count and a
+  `run_ordinal`.
+- The **collector never appends a duplicate** when that authoritative row already exists for
+  the same `(job, date, run_ordinal)`.
+- The collector writes a `synthetic: true` row **only** when no member row exists — a
+  crashed, timed-out, skipped, or standalone-invoked member that recorded none — so a failed
+  member is still represented, distinguishably.
+- `run_ordinal` is the date's brief-assembly cycle count (both writers derive it the same
+  way), so a **forced same-date re-run** — which re-runs the members after a completed brief
+  — stamps the *next* ordinal and cannot produce two representations of one logical run.
+
+The result: at most one authoritative row per (job, effective run date, ordinal), with the
+member as owner and the collector as fallback-only writer.
 
 ## Non-goals
 

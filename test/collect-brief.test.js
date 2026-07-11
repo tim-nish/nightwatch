@@ -520,4 +520,57 @@ module.exports = {
     assert.ok(flags.includes('arch-review'), 'arch-review flagged (never acted on)');
     assert.ok(!flags.includes('repo-reconcile'), 'repo-reconcile not flagged (acted on once)');
   },
+
+  // ---- Story 11.3 / FR93 — run-relative open set: a first brief is all-new -------------------
+
+  'brief: a repo\'s first run labels every finding new — no "seen again tonight" (FR93)': () => {
+    const r = tmpRepo();
+    const date = '2000-08-01';
+    writeFindings(r, 'repo-reconcile', date, [], mkFindings('repo-reconcile', 3, { kind: 'drift', severity: 3 }));
+    collect(r, date);
+    const brief = readFile(r, '.nightwatch/MORNING.md');
+    assert.match(brief, /- Findings: 3 new, 0 re-observed, 0 resolved, 0 still-open, 0 not re-examined\./, 'arithmetic reads N new');
+    assert.ok(!/_\(seen again tonight\)_/.test(brief), 'no re-observed suffix on a first run');
+    assert.ok(!/_\(evidence still present\)_/.test(brief), 'no carried-forward suffix on a first run');
+  },
+
+  'brief: findings a member appended to the ledger tonight are still NEW, not re-observed (FR93)': () => {
+    const r = tmpRepo();
+    const date = '2000-08-02';
+    // Simulate the member CLI having appended tonight's finding rows BEFORE the collector runs
+    // (recurrence bookkeeping) — the exact shape that produced the "8 re-observed" first brief.
+    appendLedger(r, [{ type: 'finding', date, job: 'repo-reconcile', id: 'RE-drift0', kind: 'drift', severity: 3 }]);
+    writeFindings(r, 'repo-reconcile', date, [], mkFindings('repo-reconcile', 1, { kind: 'drift', severity: 3 }));
+    collect(r, date);
+    const brief = readFile(r, '.nightwatch/MORNING.md');
+    assert.match(brief, /- Findings: 1 new, 0 re-observed,/, 'the member-appended finding counts as new, not re-observed');
+    assert.ok(!/_\(seen again tonight\)_/.test(brief), 'no re-observed suffix despite the pre-appended row');
+  },
+
+  // ---- Story 11.3 / FR94 — one authoritative run row per (job, date, ordinal) ----------------
+
+  'brief: the collector does NOT duplicate a member\'s authoritative run row (FR94)': () => {
+    const r = tmpRepo();
+    const date = '2000-08-03';
+    // The member CLI's post-judgment run row (as reconcile.js writes it): real count + ordinal.
+    appendLedger(r, [{ type: 'run', date, job: 'repo-reconcile', findings: 2, refuted: 0, run_ordinal: 0 }]);
+    writeFindings(r, 'repo-reconcile', date, [], mkFindings('repo-reconcile', 2, { kind: 'drift', severity: 3 }));
+    collect(r, date);
+    const runs = readLedger(r).filter((x) => x.type === 'run' && x.job === 'repo-reconcile' && x.date === date);
+    assert.strictEqual(runs.length, 1, 'exactly one repo-reconcile run row — the collector added none');
+    assert.strictEqual(runs[0].findings, 2, 'the surviving row is the member\'s authoritative one');
+    assert.ok(!runs[0].synthetic, 'the member row is authoritative, never marked synthetic');
+  },
+
+  'brief: the collector writes a synthetic run row only when no member row exists (FR94)': () => {
+    const r = tmpRepo();
+    const date = '2000-08-04';
+    // No member run row seeded — the member produced findings but recorded no authoritative row
+    // (a standalone/degraded run). The collector fills in exactly one, marked synthetic.
+    writeFindings(r, 'arch-review', date, [], mkFindings('arch-review', 1, { kind: 'arch', severity: 3 }));
+    collect(r, date);
+    const runs = readLedger(r).filter((x) => x.type === 'run' && x.job === 'arch-review' && x.date === date);
+    assert.strictEqual(runs.length, 1, 'one synthetic run row stands in for the missing member row');
+    assert.strictEqual(runs[0].synthetic, true, 'the collector-authored row is marked synthetic');
+  },
 };

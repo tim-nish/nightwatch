@@ -21,6 +21,7 @@ const { archSignals } = require('./arch-signals');
 const { extractSignals } = require('./extract-signals');
 const { inventory } = require('./surface-inventory');
 const { makeFinding, recurrenceCounts, readLedger, appendLedger, SCHEMA_VERSION } = require('./lib/findings');
+const { runOrdinal } = require('./lib/lifecycle');
 
 // Concern classes drive phase-weighted ranking. "overengineering" = unnecessary abstraction /
 // redundancy the maintainer over-built; "coupling" = drift and cross-boundary entanglement.
@@ -262,10 +263,12 @@ function archReview(root, opts = {}) {
   // reads). Guard against double-append on a same-date re-run so a re-run doesn't inflate counts.
   // Same-date guard, unless forced (spec finding-lifecycle P6): a forced re-run's run row is
   // appended with `forced: true` rather than swallowed, so the ledger never misses a run.
-  const already = readLedger(root).some((r) => r.type === 'run' && r.job === 'arch-review' && r.date === date);
+  const ledger = readLedger(root);
+  const already = ledger.some((r) => r.type === 'run' && r.job === 'arch-review' && r.date === date);
   if (!already || opts.force === true) {
+    // Authoritative post-judgment run row, one per (job, date, run_ordinal) (FR94) — see reconcile.js.
     /** @type {any} */
-    const runRow = { type: 'run', date, job: 'arch-review', candidates: candidates.length, brief: briefCandidates.length, degraded: degraded.length };
+    const runRow = { type: 'run', date, job: 'arch-review', candidates: candidates.length, brief: briefCandidates.length, degraded: degraded.length, run_ordinal: runOrdinal(ledger, date) };
     if (opts.force === true) runRow.forced = true;
     /** @type {any[]} */
     const rows = [runRow];

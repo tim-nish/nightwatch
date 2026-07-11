@@ -344,7 +344,10 @@ function collect(root, date, { force = false } = {}) {
   // so the Machine-notes GC line can render; the actual ledger writes + patch deletion happen in the
   // guarded append block below, once, keyed by run-ordinal so a forced re-run traces distinctly. ----
   const ledgerBefore = store.readLedger();
-  const openBefore = store.openFindings(); // snapshot BEFORE tonight's finding rows are appended
+  // Run-relative open set (FR93): exclude tonight's own finding rows — a member CLI may have already
+  // appended them before the collector runs, and they must not read as carried-forward. On a first
+  // run this snapshot is empty, so every finding classifies as new (no freshness suffix).
+  const openBefore = store.openFindings({ excludeDate: date });
   // Commit-policy probe (spec runtime-layout P3): a deterministic, zero-token `git check-ignore`
   // check — computed up front so its finding both enters the brief and counts as re-observed in the
   // lifecycle classification. Null when the ledger/briefs are correctly trackable.
@@ -507,7 +510,18 @@ function collect(root, date, { force = false } = {}) {
   // byte-deterministic line so the open-set bookkeeping is visible and a disappearance is impossible.
   {
     const c = lifecycleCounts(lifecycleResults);
-    if (c.open > 0) notes.push(`- Open findings: ${c.open} — ${c['re-observed']} re-observed, ${c.resolved} resolved, ${c['still-open']} still-open, ${c['not-re-examined']} not re-examined.`);
+    // New = tonight's findings not in the incoming (pre-tonight) open set (FR93). On a first run
+    // openBefore is empty, so every finding is new and the line reads "N new, 0 re-observed, …" —
+    // never "seen again tonight" for a finding no prior run recorded.
+    const openIds = new Set(openBefore.map((o) => o.id));
+    const tonightIds = new Set();
+    for (const doc of docs) for (const f of doc.findings || []) if (briefEligible(f)) tonightIds.add(f.id);
+    if (probeFinding) tonightIds.add(probeFinding.id);
+    let newCount = 0;
+    for (const id of tonightIds) if (!openIds.has(id)) newCount++;
+    if (newCount > 0 || c.open > 0) {
+      notes.push(`- Findings: ${newCount} new, ${c['re-observed']} re-observed, ${c.resolved} resolved, ${c['still-open']} still-open, ${c['not-re-examined']} not re-examined.`);
+    }
   }
   // Citation integrity (spec writing-harness P5): name every cited number that matches no PR in this
   // repo's git history; those numbers are stripped to `#?` in the brief below. Byte-deterministic.
@@ -557,9 +571,17 @@ function collect(root, date, { force = false } = {}) {
     // unforced same-night re-run is blocked by the guard above and appends nothing.
     const ordinal = runOrdinal(store.readLedger(), date);
     const runMeta = force ? { forced: true, run_ordinal: ordinal } : (ordinal ? { run_ordinal: ordinal } : {});
+    // Run-row ownership (FR94): the member CLI is the authoritative writer of its post-judgment run
+    // row, one per (job, date, run_ordinal). The collector MUST NOT append a duplicate when that row
+    // already exists; it writes a `synthetic:true` row ONLY when the member produced none (a crashed,
+    // timed-out, skipped, or standalone-invoked member that never recorded its own). Keying on the
+    // shared (job, date, ordinal) identity means a forced re-run never doubles a logical run.
+    const memberRunRow = (job) => store.readLedger().some((r) => r.type === 'run' && r.job === job && r.date === date && (r.run_ordinal || 0) === ordinal);
     for (const doc of docs) {
       const js = (runStatus.jobs || []).find((j) => j.job === doc.job) || {};
-      store.recordRun({ date, job: doc.job, findings: (doc.findings || []).length, degraded: (doc.degraded || []).length, tokens: js.tokens || null, ...runMeta });
+      if (!memberRunRow(doc.job)) {
+        store.recordRun({ date, job: doc.job, findings: (doc.findings || []).length, degraded: (doc.degraded || []).length, tokens: js.tokens || null, synthetic: true, ...runMeta });
+      }
       store.recordFindings(doc.findings || [], { date, job: doc.job });
     }
     // Record the commit-policy probe finding (P3) with its stable id so it dedupes/recurs like any
