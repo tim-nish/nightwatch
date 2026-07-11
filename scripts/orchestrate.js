@@ -20,7 +20,7 @@
 // ceiling + bounded duration estimate, and a deterministic zero-model-token scope preview. Adding
 // or removing any of it changes no scheduling decision — those come from schedule.js alone.
 const path = require('path');
-const { parseArgs, repoRoot, todayISO, isGitRepo, outDir, exists, readJSONSafe, writeJSON } = require('./lib/util');
+const { parseArgs, repoRoot, todayISO, isGitRepo, outDir, outReadPath, exists, readJSONSafe, writeJSON } = require('./lib/util');
 const { ledgerPath } = require('./lib/findings');
 const {
   readState, writeState, reconcileState, planRun, alreadyRanTonight, recordRun, markBriefed,
@@ -137,7 +137,9 @@ function orchestrate(root, date, { force = false, planOnly = false, yes = false 
  */
 function writeRunStatusScope(root, date, { scope, estimate }) {
   const p = path.join(outDir(root), `run-status-${date}.json`);
-  const cur = readJSONSafe(p);
+  // Read via the runtime→legacy fallback so an existing legacy run-status is preserved, but always
+  // WRITE to the runtime path (spec runtime-layout P2): a new run mirrors state into runtime/.
+  const cur = readJSONSafe(outReadPath(root, `run-status-${date}.json`));
   const doc = cur && typeof cur === 'object' ? cur : { jobs: [] };
   if (!Array.isArray(doc.jobs)) doc.jobs = [];
   doc.scope = scope;

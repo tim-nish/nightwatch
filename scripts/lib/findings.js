@@ -7,7 +7,7 @@
 const path = require('path');
 const crypto = require('crypto');
 const fs = require('fs');
-const { outDir, nwDir, ensureDir, readJSONSafe, writeJSON, readFileSafe } = require('./util');
+const { outDir, legacyOutDir, nwDir, ensureDir, readJSONSafe, writeJSON, readFileSafe } = require('./util');
 
 /** @typedef {import('./types').Job} Job */
 /** @typedef {import('./types').Finding} Finding */
@@ -104,7 +104,10 @@ function assertReadableSchema(doc) {
  * @throws if the file's major schema version exceeds this build's (FR6).
  */
 function readFindings(root, job, date) {
-  const doc = readJSONSafe(findingsPath(root, job, date));
+  // Read from the runtime path, falling back to the legacy `.nightwatch/out/` location (spec
+  // runtime-layout P2) so a legacy install's per-run docs still resolve until a confirmed migration.
+  let doc = readJSONSafe(findingsPath(root, job, date));
+  if (doc == null) doc = readJSONSafe(path.join(legacyOutDir(root), `${job}-${date}.json`));
   return doc == null ? null : assertReadableSchema(doc);
 }
 

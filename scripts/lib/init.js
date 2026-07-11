@@ -38,6 +38,9 @@ const TEMPLATES_DIR = path.join(__dirname, '..', '..', 'templates');
 // ledger) stays trackable. A legacy bare `out/` line from a pre-runtime install is harmless and is
 // left in place (never removed).
 const NESTED_GITIGNORE_ENTRY = 'runtime/';
+// The pre-runtime bare `out/` line — tolerated by ensureGitignore, but dropped by a confirmed
+// migration once out/'s contents have moved under runtime/ (spec runtime-layout P2).
+const LEGACY_GITIGNORE_ENTRY = 'out/';
 
 // Shipped declaration templates init instantiates: source template -> repo-relative (POSIX) dest.
 // Each declaration's canonical `dest` sits under .nightwatch/. `legacy` is a pre-consolidation
@@ -200,6 +203,57 @@ function applyMigration(root, plan, gitFn = git) {
     }
   }
   return report;
+}
+
+/**
+ * Plan the one-time migration of legacy machine state into the disposable `runtime/` boundary (spec
+ * runtime-layout P2): `.nightwatch/state.json` → `runtime/cursors.json`, and each file in
+ * `.nightwatch/out/` → `runtime/out/`. Read-only; a move is proposed only when the legacy path
+ * exists AND its runtime destination is absent, so a repo that already migrated proposes nothing
+ * (idempotent). `out/` is treated file-by-file so a partial prior migration completes cleanly.
+ * @param {string} root @param {(root:string, args:string[], opts?:any)=>(string|null)} [gitFn]
+ * @returns {{ moves: { key:string, from:string, to:string, tracked:boolean }[] }}
+ */
+function planRuntimeMigration(root, gitFn = git) {
+  const moves = [];
+  const propose = (key, from, to) => {
+    if (!exists(path.join(root, ...from.split('/')))) return;
+    if (exists(path.join(root, ...to.split('/')))) return;
+    const tracked = gitFn(root, ['ls-files', '--error-unmatch', from]) != null;
+    moves.push({ key, from, to, tracked });
+  };
+  propose('cursors', '.nightwatch/state.json', '.nightwatch/runtime/cursors.json');
+  const legacyOut = path.join(root, '.nightwatch', 'out');
+  if (exists(legacyOut)) {
+    let names = [];
+    try { names = fs.readdirSync(legacyOut, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name).sort(); } catch { names = []; }
+    for (const name of names) propose('out', `.nightwatch/out/${name}`, `.nightwatch/runtime/out/${name}`);
+  }
+  return { moves };
+}
+
+/**
+ * Rewrite the nested `.nightwatch/.gitignore` for the runtime layout (spec runtime-layout P2): ensure
+ * `runtime/` is ignored and drop a now-stale bare `out/` line (its contents have moved under
+ * `runtime/`). Only called on a confirmed migration — the ungated {@link ensureGitignore} still
+ * tolerates a legacy `out/` line. Idempotent; creates the file if absent.
+ * @param {string} root @returns {{ changed: boolean, path: string }}
+ */
+function rewriteNestedGitignoreForRuntime(root) {
+  const rel = '.nightwatch/.gitignore';
+  const gi = path.join(root, '.nightwatch', '.gitignore');
+  const cur = readFileSafe(gi) || '';
+  const kept = cur.split('\n').filter((l) => l.trim() !== LEGACY_GITIGNORE_ENTRY);
+  if (!kept.some((l) => l.trim() === NESTED_GITIGNORE_ENTRY)) {
+    // Insert runtime/ where the file has content, keeping a trailing newline.
+    while (kept.length && kept[kept.length - 1].trim() === '') kept.pop();
+    kept.push(NESTED_GITIGNORE_ENTRY);
+  }
+  const next = kept.join('\n').replace(/\n*$/, '') + '\n';
+  if (next === cur) return { changed: false, path: rel };
+  ensureDir(path.dirname(gi));
+  fs.writeFileSync(gi, next);
+  return { changed: true, path: rel };
 }
 
 /**
@@ -514,17 +568,22 @@ function applyUpdate(root, confirmed = {}) {
  */
 function runInit(root, opts = {}) {
   const probe = probeAdapters(root, opts.adapters);
-  if (opts.probeOnly) return { probe, declarations: [], readme: null, gitignore: null, dev_tooling: null, migration: null };
+  if (opts.probeOnly) return { probe, declarations: [], readme: null, gitignore: null, dev_tooling: null, migration: null, runtime_migration: null };
   const migration = opts.migrate ? applyMigration(root, planMigration(root)) : null;
+  // Confirmed runtime-layout migration (spec runtime-layout P2): relocate legacy machine state under
+  // runtime/ and rewrite the nested .gitignore. Content byte-preserved; idempotent; only on confirm.
+  const runtime_migration = opts.migrate ? applyMigration(root, planRuntimeMigration(root)) : null;
+  if (opts.migrate) rewriteNestedGitignoreForRuntime(root);
   const declarations = writeDeclarations(root, { config: opts.config });
   const readme = writeReadme(root);
   const gitignore = ensureGitignore(root);
   const dev_tooling = Array.isArray(opts.devTooling) ? writeDevTooling(root, opts.devTooling) : null;
-  return { probe, declarations, readme, gitignore, dev_tooling, migration };
+  return { probe, declarations, readme, gitignore, dev_tooling, migration, runtime_migration };
 }
 
 module.exports = {
   runInit, writeDeclarations, writeReadme, ensureGitignore, probeAdapters, readTemplate, TEMPLATES_DIR,
   detectDevToolingCandidates, writeDevTooling, trackedTopDirs, planMigration, applyMigration,
+  planRuntimeMigration, rewriteNestedGitignoreForRuntime,
   planUpdate, applyUpdate, setDeclarationField, currentUserDevTooling,
 };

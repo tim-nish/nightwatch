@@ -13,8 +13,9 @@ const path = require('path');
 const { tmpRepo, write, readFile, gitInit, commit, runScript } = require('./helpers');
 const { loadConfig, DEFAULTS } = require('../scripts/lib/config');
 const { openTracker, releaseReadPath, releaseWritePath } = require('../scripts/lib/tracker');
-const { statePath, legacyStatePath } = require('../scripts/lib/schedule');
-const { outDir, legacyOutDir } = require('../scripts/lib/util');
+const { statePath, legacyStatePath, readStateResolved } = require('../scripts/lib/schedule');
+const { outDir, legacyOutDir, outReadPath } = require('../scripts/lib/util');
+const { readFindings, writeFindings } = require('../scripts/lib/findings');
 const { ensureGitignore } = require('../scripts/lib/init');
 
 const STATE = (phase) => `# state\n\`\`\`yaml\nphase: ${phase}\n\`\`\`\n`;
@@ -128,6 +129,32 @@ module.exports = {
     assert.strictEqual(readFile(r, '.nightwatch/state.json'), null, 'nothing at the legacy state.json path');
     assert.ok(readFile(r, `.nightwatch/runtime/out/run-status-2026-07-10.json`) != null, 'per-run output under runtime/out/');
     assert.strictEqual(fs.existsSync(path.join(r, '.nightwatch', 'out')), false, 'no legacy .nightwatch/out/');
+  },
+
+  // ---- Story 9.5 — legacy fallback reads (spec runtime-layout P2) ----------------------------
+  'fallback: readState resolves runtime/cursors.json, then falls back to legacy state.json': () => {
+    const r = tmpRepo();
+    // Legacy-only install: only .nightwatch/state.json exists.
+    write(r, '.nightwatch/state.json', JSON.stringify({ schema: 1, last_brief_date: '2026-07-09', jobs: {} }));
+    let res = readStateResolved(r);
+    assert.strictEqual(res.source, 'legacy', 'reads the legacy cursors');
+    assert.strictEqual(res.state.last_brief_date, '2026-07-09');
+    // Once the runtime file exists it wins (new runs write there; the legacy file is ignored).
+    write(r, '.nightwatch/runtime/cursors.json', JSON.stringify({ schema: 1, last_brief_date: '2026-07-10', jobs: {} }));
+    res = readStateResolved(r);
+    assert.strictEqual(res.source, 'runtime', 'runtime cursors take precedence');
+    assert.strictEqual(res.state.last_brief_date, '2026-07-10');
+  },
+
+  'fallback: outReadPath and readFindings fall back to legacy out/ until a runtime file exists': () => {
+    const r = tmpRepo();
+    // A legacy per-run doc only under .nightwatch/out/.
+    write(r, '.nightwatch/out/repo-reconcile-2026-07-09.json', JSON.stringify({ schema: 1, job: 'repo-reconcile', date: '2026-07-09', findings: [] }));
+    assert.strictEqual(outReadPath(r, 'repo-reconcile-2026-07-09.json'), path.join(legacyOutDir(r), 'repo-reconcile-2026-07-09.json'), 'resolves to legacy when only legacy exists');
+    assert.ok(readFindings(r, 'repo-reconcile', '2026-07-09') != null, 'readFindings falls back to legacy out/');
+    // Writing to the runtime path makes it win.
+    writeFindings(r, 'repo-reconcile', '2026-07-09', [], []);
+    assert.strictEqual(outReadPath(r, 'repo-reconcile-2026-07-09.json'), path.join(outDir(r), 'repo-reconcile-2026-07-09.json'), 'runtime path wins once written');
   },
 
   // ---- layout invariant: fresh install writes zero root Nightwatch files --------------------

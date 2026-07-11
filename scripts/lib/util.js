@@ -54,6 +54,20 @@ function outDir(root) { return path.join(runtimeDir(root), 'out'); }
 /** Legacy per-run output location, read as a fallback until `init --update` migrates it (Story 9.5). */
 function legacyOutDir(root) { return path.join(nwDir(root), 'out'); }
 
+/**
+ * Read-resolution for a per-run output file (spec runtime-layout P2): the runtime path when it
+ * exists, else the legacy `.nightwatch/out/` path — so a legacy install keeps reading its prior
+ * artifacts with zero behavior change until a confirmed migration. Writers always target `outDir()`;
+ * only readers fall back. Returns the runtime path when neither exists (the default write location).
+ * @param {string} root @param {string} name file name under out/ (e.g. `run-status-2026-07-10.json`)
+ */
+function outReadPath(root, name) {
+  const runtime = path.join(outDir(root), name);
+  if (exists(runtime)) return runtime;
+  const legacy = path.join(legacyOutDir(root), name);
+  return exists(legacy) ? legacy : runtime;
+}
+
 /** Run git in the repo; returns stdout string, or null on failure. */
 function git(root, gitArgs, opts) {
   try {
@@ -151,6 +165,6 @@ function progressPercent(value) {
 
 module.exports = {
   parseArgs, repoRoot, todayISO, ensureDir, readFileSafe, exists, readJSONSafe,
-  writeJSON, outDir, legacyOutDir, runtimeDir, nwDir, git, isGitRepo, commitCount, globToRegExp, makeIgnore,
+  writeJSON, outDir, legacyOutDir, outReadPath, runtimeDir, nwDir, git, isGitRepo, commitCount, globToRegExp, makeIgnore,
   walkFiles, topSegment, toFraction, progressPercent,
 };
