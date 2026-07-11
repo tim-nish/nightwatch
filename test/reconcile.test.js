@@ -148,7 +148,7 @@ module.exports = {
       assert.ok(!('direction' in f), 'no direction-of-fix for an authoritative artifact');
     }
     assert.strictEqual(res.patch, null, 'no patch drafted');
-    assert.ok(!fs.existsSync(r + '/.nightwatch/out/reconcile-2000-01-01.patch'), 'no patch file written');
+    assert.ok(!fs.existsSync(r + '/.nightwatch/runtime/out/reconcile-2000-01-01.patch'), 'no patch file written');
     assert.ok(res.human_decisions.length >= 2 && res.human_decisions.every((id) => typeof id === 'string'),
       'human-decision findings exposed as a grouping');
   },

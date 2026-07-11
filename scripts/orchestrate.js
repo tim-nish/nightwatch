@@ -20,7 +20,8 @@
 // ceiling + bounded duration estimate, and a deterministic zero-model-token scope preview. Adding
 // or removing any of it changes no scheduling decision — those come from schedule.js alone.
 const path = require('path');
-const { parseArgs, repoRoot, todayISO, isGitRepo, outDir, readJSONSafe, writeJSON } = require('./lib/util');
+const { parseArgs, repoRoot, todayISO, isGitRepo, outDir, exists, readJSONSafe, writeJSON } = require('./lib/util');
+const { ledgerPath } = require('./lib/findings');
 const {
   readState, writeState, reconcileState, planRun, alreadyRanTonight, recordRun, markBriefed,
 } = require('./lib/schedule');
@@ -89,9 +90,12 @@ function orchestrate(root, date, { force = false, planOnly = false, yes = false 
 
   const { config } = loadConfig(root);
   const onDisk = readState(root);
-  // First run ⟺ no scheduler state exists yet. This is the sole trigger for the interactive
-  // confirmation gate (FR40): from the second run onward `state.json` exists and no gate fires.
-  const firstRun = onDisk == null;
+  // First run ⟺ cursors absent AND ledger absent (spec runtime-layout P1). Keying the gate on the
+  // ledger too means deleting the disposable `runtime/` dir (which resets cursors) on an install
+  // that already has a ledger is treated as an existing install — cadence resets, but the
+  // interactive first-run confirmation gate (FR40) does NOT re-fire. A genuinely fresh repo (no
+  // cursors, no ledger) still gates.
+  const firstRun = onDisk == null && !exists(ledgerPath(root));
 
   // 2. Idempotency gate. A completed run tonight (state.last_brief_date or the dated brief) means a
   //    re-invocation must exit WITHOUT spending tokens or changing files — unless --force overrides.

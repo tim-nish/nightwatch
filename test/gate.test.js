@@ -16,13 +16,28 @@ function orch(root, extraArgs = []) {
 
 module.exports = {
   // ---- gate.required is set only on the first interactive run -------------------------------
-  'gate: a fresh repo (no state.json) reports first_run and gate.required': () => {
+  // The gate condition is "cursors absent AND ledger absent" (spec runtime-layout P1). A genuinely
+  // fresh repo (neither) gates; an existing install whose disposable runtime/ was merely deleted
+  // (ledger present, cursors gone) does NOT re-gate.
+  'gate: a fresh repo (no cursors, no ledger) reports first_run and gate.required': () => {
     const root = tmpRepo();
     gitInit(root); commit(root, 'init');
     const res = orch(root, ['--plan']);
-    assert.strictEqual(res.first_run, true, 'no state.json → first run');
+    assert.strictEqual(res.first_run, true, 'no cursors + no ledger → first run');
     assert.strictEqual(res.gate.required, true, 'gate required on first interactive run');
     assert.strictEqual(res.gate.reason, 'first-run');
+  },
+
+  'gate: deleting runtime/ on an install with a ledger does NOT re-fire the gate; all jobs due': () => {
+    const root = tmpRepo();
+    gitInit(root); commit(root, 'init');
+    // A ledger exists (an existing install) but runtime/cursors.json does not (runtime/ was deleted).
+    write(root, '.nightwatch/ledger.jsonl', JSON.stringify({ type: 'finding', id: 'RC-a', date: '2026-07-01' }) + '\n');
+    const res = orch(root, ['--plan']);
+    assert.strictEqual(res.first_run, false, 'ledger present → not a first run even with cursors gone');
+    assert.strictEqual(res.gate.required, false, 'no first-run gate on an existing install');
+    // Deletion resets cadence: every member is due again.
+    assert.deepStrictEqual(res.due, ['repo-reconcile', 'arch-review', 'release-progress'], 'all jobs due after cadence reset');
   },
 
   'gate: --force and --yes both clear the gate': () => {
@@ -42,7 +57,7 @@ module.exports = {
     const first = orch(root);
     assert.strictEqual(first.status, 'ran');
     assert.strictEqual(first.first_run, true, 'the first real run is a first run');
-    assert.ok(readFile(root, '.nightwatch/state.json') != null, 'state.json created');
+    assert.ok(readFile(root, '.nightwatch/runtime/cursors.json') != null, 'state.json created');
     // A later night (force past the idempotency no-op) is NOT a first run and has no gate.
     const later = orch(root, ['--plan', '--force']);
     assert.strictEqual(later.first_run, false, 'state.json exists → not a first run');
@@ -57,8 +72,8 @@ module.exports = {
     const res = orch(root, ['--plan']);
     assert.strictEqual(res.gate.required, true);
     // Declining means the command simply stops here — and --plan itself wrote nothing.
-    assert.strictEqual(readFile(root, '.nightwatch/state.json'), null, 'no state.json written pre-gate');
-    assert.strictEqual(readFile(root, `.nightwatch/out/run-status-${DATE}.json`), null, 'no run-status written pre-gate');
+    assert.strictEqual(readFile(root, '.nightwatch/runtime/cursors.json'), null, 'no state.json written pre-gate');
+    assert.strictEqual(readFile(root, `.nightwatch/runtime/out/run-status-${DATE}.json`), null, 'no run-status written pre-gate');
     assert.strictEqual(git(root, ['status', '--porcelain']), before, 'working tree unchanged pre-gate');
   },
 
@@ -76,6 +91,6 @@ module.exports = {
       const p = line.replace(/^\S+\s+/, '');
       assert.ok(p.startsWith('.nightwatch/'), `write outside surface: ${line}`);
     }
-    assert.ok(readFile(root, '.nightwatch/state.json') != null, 'state.json written on a scheduled run');
+    assert.ok(readFile(root, '.nightwatch/runtime/cursors.json') != null, 'state.json written on a scheduled run');
   },
 };

@@ -64,7 +64,7 @@ module.exports = {
     const root = tmpRepo();
     gitInit(root); commit(root, 'init');
     // arch-review ran recently (weekly) → skipped tonight with a legible next_due
-    write(root, '.nightwatch/state.json', JSON.stringify({
+    write(root, '.nightwatch/runtime/cursors.json', JSON.stringify({
       schema: 1, updated: '2026-07-08', last_brief_date: '2026-07-08',
       jobs: {
         'repo-reconcile': { cadence: 'nightly', last_run: '2026-07-08', runs: 1, next_due: '2026-07-09' },
@@ -96,8 +96,8 @@ module.exports = {
     commit(root, 'init');
     const res = orch(root, ['--plan']);
     assert.strictEqual(res.status, 'plan');
-    assert.strictEqual(readFile(root, '.nightwatch/state.json'), null, '--plan wrote no state.json');
-    assert.strictEqual(readFile(root, `.nightwatch/out/run-status-${DATE}.json`), null, '--plan wrote no run-status');
+    assert.strictEqual(readFile(root, '.nightwatch/runtime/cursors.json'), null, '--plan wrote no state.json');
+    assert.strictEqual(readFile(root, `.nightwatch/runtime/out/run-status-${DATE}.json`), null, '--plan wrote no run-status');
     assert.strictEqual(git(root, ['status', '--porcelain']).trim(), '', 'working tree untouched by --plan');
   },
 
@@ -109,7 +109,7 @@ module.exports = {
     commit(root, 'init');
     const res = orch(root);
     assert.strictEqual(res.status, 'ran');
-    const rs = readJSON(root, `.nightwatch/out/run-status-${DATE}.json`);
+    const rs = readJSON(root, `.nightwatch/runtime/out/run-status-${DATE}.json`);
     assert.ok(rs && rs.scope && rs.estimate, 'run-status carries scope + estimate');
     assert.strictEqual(rs.estimate.token_ceiling, 600000);
     assert.ok(Array.isArray(rs.jobs), 'jobs array preserved for the command to fill');
@@ -121,11 +121,11 @@ module.exports = {
     gitInit(root);
     write(root, 'src/app.js', 'x\n');
     // a prior member flow already recorded per-job outcomes
-    write(root, `.nightwatch/out/run-status-${DATE}.json`,
+    write(root, `.nightwatch/runtime/out/run-status-${DATE}.json`,
       JSON.stringify({ jobs: [{ job: 'repo-reconcile', status: 'ok', tokens: 1234 }] }) + '\n');
     commit(root, 'init');
     orch(root);
-    const rs = readJSON(root, `.nightwatch/out/run-status-${DATE}.json`);
+    const rs = readJSON(root, `.nightwatch/runtime/out/run-status-${DATE}.json`);
     assert.strictEqual(rs.jobs.length, 1, 'existing job preserved');
     assert.strictEqual(rs.jobs[0].tokens, 1234, 'job payload untouched');
     assert.ok(rs.scope, 'scope added alongside jobs');

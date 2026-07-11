@@ -38,10 +38,10 @@ function nwIdOf(doc, needle) {
   return m ? m[1] : null;
 }
 
-/** Write a foreign job's findings doc where release-progress reads it (`.nightwatch/out/…`). */
+/** Write a foreign job's findings doc where release-progress reads it (`.nightwatch/runtime/out/…`). */
 function writeForeign(root, job, date, findings) {
   const doc = { schema: 1, job, date, degraded: [], findings };
-  write(root, `.nightwatch/out/${job}-${date}.json`, JSON.stringify(doc, null, 2) + '\n');
+  write(root, `.nightwatch/runtime/out/${job}-${date}.json`, JSON.stringify(doc, null, 2) + '\n');
 }
 
 module.exports = {

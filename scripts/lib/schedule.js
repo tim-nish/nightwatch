@@ -13,7 +13,7 @@
 // scheduled tonight"; idempotency (a separate gate, keyed on state.json + the dated brief) answers
 // "did we already do tonight's run" — a second same-night invocation is a no-op unless `--force`.
 const path = require('path');
-const { nwDir, readJSONSafe, writeJSON, exists } = require('./util');
+const { nwDir, runtimeDir, readJSONSafe, writeJSON, exists } = require('./util');
 
 /** @typedef {import('./types').Config} Config */
 /** @typedef {import('./types').NightwatchState} NightwatchState */
@@ -30,7 +30,12 @@ const CADENCE_DAYS = Object.freeze({ nightly: 1, weekly: 7 });
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-function statePath(root) { return path.join(nwDir(root), 'state.json'); }
+// Cadence cursors live under the disposable `runtime/` boundary and are named `cursors.json` — the
+// machine's cursor no longer name-collides with the human's STATE.md (spec runtime-layout P1). The
+// export name stays `statePath` for its callers; the legacy `.nightwatch/state.json` is read as a
+// fallback and migrated by `init --update` in Story 9.5.
+function statePath(root) { return path.join(runtimeDir(root), 'cursors.json'); }
+function legacyStatePath(root) { return path.join(nwDir(root), 'state.json'); }
 
 /** Whole-day distance between two ISO `YYYY-MM-DD` dates (b - a). NaN inputs yield Infinity. */
 function daysBetween(a, b) {
@@ -185,7 +190,7 @@ function markBriefed(state, date) {
 
 module.exports = {
   STATE_SCHEMA, ORDERED_MEMBERS, CADENCE_DAYS, DATE_RE,
-  statePath, daysBetween, addDays, cadenceDays, nextDue, jobDue,
+  statePath, legacyStatePath, daysBetween, addDays, cadenceDays, nextDue, jobDue,
   defaultState, readState, writeState, reconcileState, planRun,
   alreadyRanTonight, recordRun, markBriefed,
 };

@@ -101,19 +101,19 @@ module.exports = {
     assert.match(state.message, /^STATE\.md already exists \(STATE\.md\)/);
   },
 
-  'init: ignores out/ via a nested .nightwatch/.gitignore, never the root .gitignore, idempotently': () => {
+  'init: ignores runtime/ via a nested .nightwatch/.gitignore, never the root .gitignore, idempotently': () => {
     const root = tmpRepo();
     gitInit(root); commit(root, 'init');
 
     const first = ensureGitignore(root);
     assert.strictEqual(first.changed, true, 'first call adds the ignore');
-    assert.ok(/^out\/$/m.test(readFile(root, '.nightwatch/.gitignore')), 'nested out/ present');
+    assert.ok(/^runtime\/$/m.test(readFile(root, '.nightwatch/.gitignore')), 'nested runtime/ present');
     assert.strictEqual(readFile(root, '.gitignore'), null, 'root .gitignore never created');
 
     const second = ensureGitignore(root);
     assert.strictEqual(second.changed, false, 'idempotent — no duplicate entry');
-    const occurrences = readFile(root, '.nightwatch/.gitignore').split('\n').filter((l) => l.trim() === 'out/').length;
-    assert.strictEqual(occurrences, 1, 'exactly one out/ ignore line');
+    const occurrences = readFile(root, '.nightwatch/.gitignore').split('\n').filter((l) => l.trim() === 'runtime/').length;
+    assert.strictEqual(occurrences, 1, 'exactly one runtime/ ignore line');
   },
 
   'init: CLI end-to-end writes both declarations and reports status ok': () => {

@@ -61,7 +61,7 @@ module.exports = {
   'narrate CLI: prints the narration lines read from run-status-<date>.json': () => {
     const root = tmpRepo();
     gitInit(root);
-    write(root, `.nightwatch/out/run-status-2026-07-09.json`, JSON.stringify({
+    write(root, `.nightwatch/runtime/out/run-status-2026-07-09.json`, JSON.stringify({
       jobs: [{ job: 'repo-reconcile', status: 'ok', tokens: 42 }, { job: 'arch-review', status: 'crashed', note: 'boom' }],
       brief: { shown: 3, total: 3 },
     }) + '\n');

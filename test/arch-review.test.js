@@ -144,7 +144,7 @@ module.exports = {
     const ids = (res) => res.findings.map((f) => f.id).sort();
     assert.deepStrictEqual(ids(a), ids(b), 'finding ids are identical across runs');
     // The persisted document agrees with the in-memory result.
-    const doc = readJSON(r, '.nightwatch/out/arch-review-2000-01-01.json');
+    const doc = readJSON(r, '.nightwatch/runtime/out/arch-review-2000-01-01.json');
     assert.deepStrictEqual(doc.findings.map((f) => f.id).sort(), ids(a));
   },
 
@@ -162,7 +162,7 @@ module.exports = {
     const after = snapshotOutside(r);
     assert.deepStrictEqual(after, before, 'no file outside .nightwatch/ was created or modified');
     // The job DID write its output under .nightwatch/.
-    assert.ok(fs.existsSync(path.join(r, '.nightwatch', 'out', 'arch-review-2000-01-01.json')), 'findings doc written under .nightwatch/');
+    assert.ok(fs.existsSync(path.join(r, '.nightwatch', 'runtime', 'out', 'arch-review-2000-01-01.json')), 'findings doc written under .nightwatch/runtime/');
     assert.ok(fs.existsSync(path.join(r, '.nightwatch', 'ledger.jsonl')), 'ledger written under .nightwatch/');
   },
 };

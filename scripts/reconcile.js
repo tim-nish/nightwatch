@@ -303,7 +303,7 @@ function reconcile(root, opts = {}) {
   //   role: derived       → mechanically fixable → action `patch-available` + a patch line
   //   role: authoritative → a bug or unrecorded decision → `human-decision`, NEVER a patch
   //   undeclared artifact → `human-decision`, direction omitted (3.2 behavior, preserved)
-  const patchFile = `.nightwatch/out/reconcile-${date}.patch`;
+  const patchFile = `.nightwatch/runtime/out/reconcile-${date}.patch`;
   const pendingPatch = new Map(); // finding.id -> { path, line } — a delete to draft IF it survives
   const drift = [];
   for (const c of claims) {
@@ -422,7 +422,7 @@ function main() {
   const root = repoRoot(args);
   const date = todayISO(args);
   const res = reconcile(root, { date });
-  const patch_path = res.patchPath ? `.nightwatch/out/reconcile-${date}.patch` : null;
+  const patch_path = res.patchPath ? `.nightwatch/runtime/out/reconcile-${date}.patch` : null;
   const doc = { schema: SCHEMA_VERSION, job: 'repo-reconcile', date, degraded: res.degraded, findings: res.findings,
     human_decisions: res.human_decisions, patch_path, patch_branch: res.patchBranch, claims: res.claims, unverifiable: res.unverifiable, refuted: res.refuted, stopped: res.stopped };
   writeJSON(path.join(outDir(root), `repo-reconcile-${date}.json`), doc);

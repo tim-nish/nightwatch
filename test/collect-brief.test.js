@@ -486,7 +486,7 @@ module.exports = {
     // A findings doc from a too-new schema makes assembly throw (readAllFindings refuses it, FR6).
     writeJSON(path.join(outDir(r), `repo-reconcile-${date}.json`),
       { schema: 999, job: 'repo-reconcile', date, degraded: [], findings: [] });
-    const rawBefore = readFile(r, `.nightwatch/out/repo-reconcile-${date}.json`);
+    const rawBefore = readFile(r, `.nightwatch/runtime/out/repo-reconcile-${date}.json`);
 
     const res = collectOrStub(r, date);
     assert.strictEqual(res.status, 'stub', 'assembly fell back to a stub');
@@ -497,7 +497,7 @@ module.exports = {
     assert.ok(/schema v999/.test(brief), 'stub names the failure');
     assert.ok(readFile(r, `.nightwatch/briefs/${date}.md`) === brief, 'dated stub brief written too');
     // The raw findings JSON is untouched — the collector never deletes out/*.json.
-    assert.strictEqual(readFile(r, `.nightwatch/out/repo-reconcile-${date}.json`), rawBefore, 'raw out/*.json intact');
+    assert.strictEqual(readFile(r, `.nightwatch/runtime/out/repo-reconcile-${date}.json`), rawBefore, 'raw out/*.json intact');
   },
 
   'demotion: job with zero acted-on findings two runs running is flagged': () => {

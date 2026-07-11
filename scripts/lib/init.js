@@ -32,10 +32,12 @@ const PRODUCT_DIR_ALLOWLIST = new Set([
 const SRC_EXT = /\.(js|mjs|cjs|ts|tsx|jsx|py|go|rs|rb|java)$/;
 
 const TEMPLATES_DIR = path.join(__dirname, '..', '..', 'templates');
-// The transient per-run artifact dir is ignored via a NESTED .nightwatch/.gitignore (git honors
-// nested ignore files), so Nightwatch never edits the project's root .gitignore (FR50). Relative to
-// .nightwatch/, the entry is a bare `out/`.
-const NESTED_GITIGNORE_ENTRY = 'out/';
+// Disposable machine state is ignored via a NESTED .nightwatch/.gitignore (git honors nested ignore
+// files), so Nightwatch never edits the project's root .gitignore (FR50). The boundary is the whole
+// `runtime/` dir (spec runtime-layout P1) — cursors + per-run out/ — so committed memory (briefs,
+// ledger) stays trackable. A legacy bare `out/` line from a pre-runtime install is harmless and is
+// left in place (never removed).
+const NESTED_GITIGNORE_ENTRY = 'runtime/';
 
 // Shipped declaration templates init instantiates: source template -> repo-relative (POSIX) dest.
 // Each declaration's canonical `dest` sits under .nightwatch/. `legacy` is a pre-consolidation
@@ -106,10 +108,11 @@ function writeDeclarations(root, opts = {}) {
 }
 
 /**
- * Ensure the transient artifact dir is git-ignored via a NESTED `.nightwatch/.gitignore` (FR50) —
- * the per-run `out/` must never be committed, but the project's root `.gitignore` is never touched.
- * Idempotent: appends `out/` only when absent, creating the nested file if needed. A legacy
- * `.nightwatch/out/` line in a root `.gitignore` is harmless and is left in place (never removed).
+ * Ensure the disposable `runtime/` dir is git-ignored via a NESTED `.nightwatch/.gitignore` (FR50,
+ * spec runtime-layout P1) — machine state must never be committed, but the project's root
+ * `.gitignore` is never touched. Idempotent: appends `runtime/` only when absent, creating the
+ * nested file if needed. A legacy bare `out/` line is left in place (harmless once runtime/out/ is
+ * the write path).
  * @param {string} root
  * @returns {{ changed: boolean, path: string }}
  */
