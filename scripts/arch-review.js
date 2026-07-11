@@ -105,7 +105,7 @@ function blastRadius(evidencePaths, inv, allFiles) {
  * findings doc + ledger rows (both under `.nightwatch/`). The agent's adversarial pass then
  * verifies survivors and only those render in the brief.
  * @param {string} root
- * @param {{ date?: string }} [opts]
+ * @param {{ date?: string, force?: boolean }} [opts]
  */
 function archReview(root, opts = {}) {
   const date = opts.date || todayISO();
@@ -260,10 +260,15 @@ function archReview(root, opts = {}) {
 
   // Record findings in the ledger for recurrence (same append-only ledger the tracking store
   // reads). Guard against double-append on a same-date re-run so a re-run doesn't inflate counts.
+  // Same-date guard, unless forced (spec finding-lifecycle P6): a forced re-run's run row is
+  // appended with `forced: true` rather than swallowed, so the ledger never misses a run.
   const already = readLedger(root).some((r) => r.type === 'run' && r.job === 'arch-review' && r.date === date);
-  if (!already) {
+  if (!already || opts.force === true) {
+    /** @type {any} */
+    const runRow = { type: 'run', date, job: 'arch-review', candidates: candidates.length, brief: briefCandidates.length, degraded: degraded.length };
+    if (opts.force === true) runRow.forced = true;
     /** @type {any[]} */
-    const rows = [{ type: 'run', date, job: 'arch-review', candidates: candidates.length, brief: briefCandidates.length, degraded: degraded.length }];
+    const rows = [runRow];
     for (const f of findings) rows.push({ type: 'finding', date, job: 'arch-review', id: f.id, kind: f.kind, severity: f.severity });
     appendLedger(root, rows);
   }
@@ -281,7 +286,7 @@ function main() {
   const args = parseArgs(process.argv.slice(2));
   const root = repoRoot(args);
   const date = todayISO(args);
-  const res = archReview(root, { date });
+  const res = archReview(root, { date, force: !!args.force });
   process.stdout.write(JSON.stringify({
     candidates: res.ranked.length, brief: res.brief.length, appendix: res.appendix.length,
     findings: res.findings.length, degraded: res.degraded,

@@ -1,9 +1,10 @@
 'use strict';
 const assert = require('assert');
 const fs = require('fs');
+const path = require('path');
 const { tmpRepo, write, git, gitInit, commit } = require('./helpers');
 const { reconcile } = require('../scripts/reconcile');
-const { recurrenceCounts } = require('../scripts/lib/findings');
+const { recurrenceCounts, readLedger } = require('../scripts/lib/findings');
 
 function byLocusKind(res) { return res; }
 
@@ -136,6 +137,37 @@ module.exports = {
     const res2 = reconcile(r, { date: '2000-01-02' });
     assert.strictEqual(res2.findings.filter((f) => f.kind === 'drift').length, 0, 're-run after apply → 0 drift findings');
     assert.strictEqual(res2.patch, null, 're-run drafts no patch');
+  },
+
+  // Story 9.3 — patches are named per finding (spec finding-lifecycle P5): each derived-drift
+  // finding carries a `patch_file` at runtime/out/reconcile-<date>-<id>.patch, and that file exists.
+  'reconcile: each derived-drift finding gets its own per-id patch file (FR76)': () => {
+    const r = repoWithSurgicalDrift('derived');
+    const res = reconcile(r, { date: '2000-01-01' });
+    const drift = res.findings.filter((f) => f.kind === 'drift');
+    assert.ok(drift.length >= 2, 'multiple drifted claims');
+    for (const f of drift) {
+      assert.strictEqual(f.patch_file, `.nightwatch/runtime/out/reconcile-2000-01-01-${f.id}.patch`, 'per-finding patch path');
+      assert.ok(fs.existsSync(path.join(r, ...f.patch_file.split('/'))), 'the per-finding patch file exists');
+    }
+    assert.strictEqual(res.patches.length, drift.length, 'one patch entry per derived-drift finding');
+    // A same-date forced re-run keeps every still-open finding's patch file present (preservation).
+    reconcile(r, { date: '2000-01-01', force: true });
+    for (const f of drift) assert.ok(fs.existsSync(path.join(r, ...f.patch_file.split('/'))), 'patch preserved across a forced re-run');
+  },
+
+  // Story 9.3 — a forced same-date re-run appends a `forced: true` run row (never swallowed by the
+  // same-date guard); an unforced re-run appends nothing (FR77).
+  'reconcile: a forced re-run traces in the ledger; an unforced re-run is a no-op (FR77)': () => {
+    const r = repoWithSurgicalDrift('derived');
+    reconcile(r, { date: '2000-01-01' });
+    reconcile(r, { date: '2000-01-01' }); // unforced same-date → no new run row
+    let runs = readLedger(r).filter((x) => x.type === 'run' && x.job === 'repo-reconcile' && x.date === '2000-01-01');
+    assert.strictEqual(runs.length, 1, 'unforced re-run appends no run row');
+    reconcile(r, { date: '2000-01-01', force: true });
+    runs = readLedger(r).filter((x) => x.type === 'run' && x.job === 'repo-reconcile' && x.date === '2000-01-01');
+    assert.strictEqual(runs.length, 2, 'forced re-run appends a second run row');
+    assert.ok(runs.some((x) => x.forced === true), 'the forced run row is stamped forced:true');
   },
 
   'reconcile: authoritative artifact → human-decision, no patch drafted in either direction (FR20)': () => {
