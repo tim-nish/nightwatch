@@ -11,6 +11,7 @@ const yaml = require('js-yaml');
 const { parseArgs, repoRoot, todayISO, nwDir, outDir, ensureDir, readFileSafe, readJSONSafe, exists, progressPercent } = require('./lib/util');
 const { readAllFindings } = require('./lib/findings');
 const { openTracker, releaseReadPath } = require('./lib/tracker');
+const { classifyOpenFindings, newClassificationRows } = require('./lib/lifecycle');
 const { loadConfig } = require('./lib/config');
 const { excludedTopDirs, unclassifiedTopDirs } = require('./lib/scope');
 
@@ -330,6 +331,9 @@ function collect(root, date, { force = false } = {}) {
   // recurrence/demotion counts. Per-job lines carry date/job/tokens/findings count/degraded flags;
   // finding rows go through recordFindings so they dedupe by id like every other ledger writer. ----
   const already = store.readLedger().some((r) => r.type === 'run' && r.job === 'collect-brief' && r.date === date);
+  // The open set carried INTO tonight, snapshotted before tonight's finding rows are appended (spec
+  // finding-lifecycle P1). Everything here must be classified exactly once before the run ends.
+  const openBefore = store.openFindings();
   if (!already || force) {
     for (const doc of docs) {
       const js = (runStatus.jobs || []).find((j) => j.job === doc.job) || {};
@@ -337,6 +341,17 @@ function collect(root, date, { force = false } = {}) {
       store.recordFindings(doc.findings || [], { date, job: doc.job });
     }
     store.recordRun({ date, job: 'collect-brief', shown: shown.length, total: all.length, cap });
+    // Per-run classification of the carried-forward open set (spec P1): an id tonight's docs
+    // re-surfaced is `re-observed` (its finding row already dedupes); every other open finding
+    // falls to the classifier — for now `not-re-examined` (the deterministic floor + budgeted
+    // judgment recheck arrive in Story 9.2). Rows are keyed (type,id,date) so a forced re-run never
+    // duplicates them, and no historical row is rewritten. So no open finding silently vanishes.
+    const reobserved = new Set();
+    for (const doc of docs) for (const f of doc.findings || []) reobserved.add(f.id);
+    const results = classifyOpenFindings({ open: openBefore, reobserved, date });
+    for (const row of newClassificationRows(results, store.readLedger())) {
+      if (row.type === 'resolution') store.recordResolution(row); else store.recordRecheck(row);
+    }
   }
 
   return { total: all.length, shown: shown.length, overflow: overflow.length, demotions };

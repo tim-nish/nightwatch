@@ -4,6 +4,13 @@
   (`RELEASE.md` reader-side order, item format), §6 (`init` writes the orientation README),
   §7 (templates). README/docs rewrites land at implementation. **FR assignment deferred** to
   the BMAD planning-artifacts update (not yet generated).
+- **Superseded in part 2026-07-11:** P3's section order is replaced by
+  [release-journey](release-journey.md) P3 (journey order — the road first); the
+  orientation README's three-tier content (P5-adjacent, shipped as FR65) is replaced by
+  [runtime-layout](runtime-layout.md) P5's four-column map; and P6's deferred
+  `state.json` rename is now exercised (`runtime/cursors.json`, runtime-layout P1). The
+  taxonomy vocabulary, description rules (P1–P2), and patch-exception description (P4)
+  remain in force.
 - **Motivated by:** dogfooding finding
   [0017 — Output file descriptions](../dogfooding/0017-output-file-descriptions.md)
   (with [0016](../dogfooding/0016-morning-brief-usability.md) as context).

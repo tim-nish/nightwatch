@@ -11,6 +11,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { nwDir, ensureDir, readFileSafe, exists } = require('./util');
 const { dedupeFindings } = require('./findings');
+const { openFindings: computeOpenFindings } = require('./lifecycle');
 
 /** @typedef {import('./types').EvidenceItem} EvidenceItem */
 /** @typedef {import('./types').Finding} Finding */
@@ -452,12 +453,28 @@ function openTracker(repo, config) {
         memLedger.push(row);
         return row;
       },
+      // Finding-lifecycle classification rows (spec finding-lifecycle P1). `resolution` closes a
+      // finding with an evidence clause; `recheck` records that an open finding was re-examined
+      // (method `deterministic`|`judgment`) or not reached (`skipped`). Both go through the store —
+      // the sole sanctioned ledger writer (§2.7) — so no job touches ledger.jsonl directly.
+      recordResolution(row) {
+        const r = { type: 'resolution', id: row.id, date: row.date || '', evidence: String((row && row.evidence) || '') };
+        memLedger.push(r);
+        return r;
+      },
+      recordRecheck(row) {
+        const r = { type: 'recheck', id: row.id, date: row.date || '', method: row.method };
+        memLedger.push(r);
+        return r;
+      },
       recordRun(row) {
         const r = Object.assign({ type: 'run' }, row);
         memLedger.push(r);
         return r;
       },
       readLedger() { return memLedger.slice(); },
+      // The open set carried into a run (spec P1): finding ids with no resolution and no dismissal.
+      openFindings() { return computeOpenFindings(memLedger.slice()); },
       flush() { core.markDirty(); return { backend: 'memory' }; },
     });
   }
@@ -508,6 +525,20 @@ function openTracker(repo, config) {
       appendLedgerRows(repo, [row]);
       return row;
     },
+    // Finding-lifecycle classification rows (spec finding-lifecycle P1) — see the memory backend for
+    // the semantics. Append-only through the store, never a raw ledger write (§2.7).
+    recordResolution(row) {
+      const r = { type: 'resolution', id: row.id, date: row.date || '', evidence: String((row && row.evidence) || '') };
+      appendLedgerRows(repo, [r]);
+      return r;
+    },
+    recordRecheck(row) {
+      const r = { type: 'recheck', id: row.id, date: row.date || '', method: row.method };
+      appendLedgerRows(repo, [r]);
+      return r;
+    },
+    // The open set carried into a run (spec P1): finding ids with no resolution and no dismissal.
+    openFindings() { return computeOpenFindings(this.readLedger()); },
     // Append a per-run ledger line (the brief collector's per-job summary: date/job/tokens/
     // findings count/degraded flags). A plain object stamped `type:'run'` and written through the
     // store's sole ledger writer, so no consumer needs to touch ledger.jsonl directly (§2.7).

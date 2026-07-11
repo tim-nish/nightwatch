@@ -77,6 +77,35 @@
  */
 
 /**
+ * @typedef {'re-observed' | 'resolved' | 'still-open' | 'not-re-examined'} FindingClassification
+ * The per-run lifecycle state of an open finding (spec docs/specs/finding-lifecycle.md P1). Every
+ * open finding is classified into exactly one of these each run, so an unfixed finding can never
+ * silently drop out: `re-observed` (found again — a plain finding row), `resolved` (evidence gone —
+ * a `resolution` row), `still-open` (evidence present — a `recheck` row), `not-re-examined`
+ * (budget/scope didn't reach it — a `recheck` row, method `skipped`).
+ */
+
+/**
+ * A `resolution` ledger row: a finding whose underlying issue evidence shows is gone (spec P1). Its
+ * presence removes the finding from the open set — it will not be carried forward again.
+ * @typedef {object} ResolutionRow
+ * @property {'resolution'} type
+ * @property {string} id Finding id being resolved.
+ * @property {string} date ISO `YYYY-MM-DD` of the run that resolved it.
+ * @property {string} evidence Human-readable evidence clause naming why it is considered resolved.
+ */
+
+/**
+ * A `recheck` ledger row: an open finding was re-examined this run but not resolved (spec P1/P2/P3).
+ * @typedef {object} RecheckRow
+ * @property {'recheck'} type
+ * @property {string} id Finding id re-examined.
+ * @property {string} date ISO `YYYY-MM-DD`.
+ * @property {'deterministic' | 'judgment' | 'skipped'} method How it was re-examined: the free
+ *   deterministic floor, a budgeted judgment recheck, or `skipped` (budget/scope did not reach it).
+ */
+
+/**
  * Parsed `--key value` / `--flag` argv (see util.parseArgs). Positional args land in `_`;
  * every other key is a raw flag value the caller coerces as needed.
  * @typedef {{ _: string[], [key: string]: any }} Args
