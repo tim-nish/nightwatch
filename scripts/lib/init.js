@@ -17,7 +17,7 @@
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
-const { exists, readFileSafe, ensureDir, git, makeIgnore, walkFiles } = require('./util');
+const { exists, readFileSafe, readJSONSafe, ensureDir, git, isGitRepo, makeIgnore, walkFiles } = require('./util');
 const { DEFAULT_DEV_TOOLING, analysisExcludeGlobs, detectRepoClass } = require('./scope');
 const { loadConfig } = require('./config');
 const { draftMilestones } = require('./milestones');
@@ -631,9 +631,67 @@ function runInit(root, opts = {}) {
   return { probe, declarations, readme, gitignore, dev_tooling, migration, runtime_migration };
 }
 
+// Semver-shaped version/tag: `1.2.3` or `v1.2.3` (prerelease/build suffixes tolerated).
+const SEMVER_RE = /^v?(\d+)\.(\d+)\.(\d+)/;
+
+/** The declared version string from a published-package manifest (package.json / pyproject), or null. */
+function readManifestVersion(root) {
+  const pkg = readJSONSafe(path.join(root, 'package.json'));
+  if (pkg && typeof pkg.version === 'string' && pkg.version.trim()) return pkg.version.trim();
+  const py = readFileSafe(path.join(root, 'pyproject.toml'));
+  if (py != null) { const m = py.match(/^\s*version\s*=\s*["']([^"']+)["']/m); if (m) return m[1].trim(); }
+  return null;
+}
+
+/** Existing git tags (release markers), empty outside a git checkout. */
+function gitTags(root) {
+  if (!isGitRepo(root)) return [];
+  const out = git(root, ['tag', '--list']);
+  if (out == null) return [];
+  return out.split('\n').map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * Non-binding phase suggestion from cheap, deterministic, read-only signals (FR105, first-run-ux
+ * P9.2): an existing release/tag, a published-package manifest version, semantic versioning. The
+ * user always chooses — this only lowers the interpretation burden. Rules:
+ *  - keys on the substrate probe (content-repo-scoping P1): with no import substrate the signals
+ *    are code-repo-shaped and expected absent, so no suggestion is inferred from weaker evidence;
+ *  - `released` when a 1.0+ version exists (a stable major has shipped), else `hardening` (has
+ *    releases/a published manifest but is still pre-1.0, shipping toward the next release);
+ *  - never reads STATE.md — phase is the human's judgment about maturity, not a derivable fact.
+ * @param {string} root
+ * @returns {{ suggested: 'hardening'|'released'|null, signals: string[] }}
+ */
+function suggestPhase(root) {
+  const { substrate } = detectRepoClass(root);
+  if (!substrate) return { suggested: null, signals: [] };
+
+  const signals = [];
+  let maxMajor = -1;
+
+  const version = readManifestVersion(root);
+  if (version) {
+    signals.push('versioned-manifest');
+    const m = version.match(SEMVER_RE);
+    if (m) { signals.push('semver'); maxMajor = Math.max(maxMajor, parseInt(m[1], 10)); }
+  }
+
+  const semverTags = gitTags(root).filter((t) => SEMVER_RE.test(t));
+  if (semverTags.length) {
+    signals.push('release-tag');
+    for (const t of semverTags) { const m = t.match(SEMVER_RE); if (m) maxMajor = Math.max(maxMajor, parseInt(m[1], 10)); }
+  }
+
+  const uniq = [...new Set(signals)].sort();
+  if (!uniq.length) return { suggested: null, signals: [] };
+  return { suggested: maxMajor >= 1 ? 'released' : 'hardening', signals: uniq };
+}
+
 module.exports = {
   runInit, writeDeclarations, writeReadme, ensureGitignore, probeAdapters, readTemplate, TEMPLATES_DIR,
   detectDevToolingCandidates, writeDevTooling, trackedTopDirs, planMigration, applyMigration,
   planRuntimeMigration, rewriteNestedGitignoreForRuntime,
   planUpdate, applyUpdate, applyMilestonesDraft, setDeclarationField, currentUserDevTooling,
+  suggestPhase,
 };
