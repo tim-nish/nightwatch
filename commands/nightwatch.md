@@ -45,6 +45,14 @@ generated document may reference **only** artifacts of the target repository —
 locate under the repo root is dropped, never trusted. Write as the maintainer's chief of staff (W10),
 never as the tool's narrator.
 
+**Adversarial pass — reader-question & citation refutation (spec writing-harness P4.3/P5).** In
+addition to the existing truth check, the refuting reviewer is told the reader question each authored
+field must answer and **refutes any field that does not answer it**, and **refutes any citation it
+cannot locate under the target repo root**. The deterministic collector (`collect-brief.js`) enforces
+the mechanical rules with no model call — mid-sentence hard wraps (W1) and bare `#N` (W2) degrade a
+field to its title, and every `#N` absent from this repo's git history is flagged in Machine notes and
+rendered without its number — so a lint or citation failure is never broken output.
+
 ---
 
 ## `init` mode (daytime, interactive — the ONLY mode that may ask questions)
