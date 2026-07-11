@@ -22,7 +22,9 @@
 
 /**
  * @typedef {1 | 2 | 3 | 4 | 5} Severity
- * Finding severity, 1 (lowest) .. 5 (highest).
+ * Finding severity: 1 = blocker/worst .. 5 = nice-to-have. This direction is normative for
+ * every producer and consumer (spec §2.5, FR91); blocker *classification* keys on
+ * `kind: 'blocker'`, never on `severity === 1`.
  */
 
 /**
