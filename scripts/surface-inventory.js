@@ -6,9 +6,12 @@
 // Per-ecosystem extractor (Node/TS first) + a universal fallback that works everywhere
 // (file tree + command files + README code blocks + flag tokens). Writes out/surface-<date>.json.
 const path = require('path');
-const { parseArgs, guardCli, repoRoot, todayISO, walkFiles, readFileSafe, exists, readJSONSafe, topSegment, writeJSON, outDir } = require('./lib/util');
+const { parseArgs, guardCli, repoRoot, todayISO, walkFiles, makeIgnore, readFileSafe, exists, readJSONSafe, topSegment, writeJSON, outDir } = require('./lib/util');
 const { loadConfig } = require('./lib/config');
-const { analysisExcludeGlobs } = require('./lib/scope');
+const { analysisExcludeGlobs, DEFAULT_IGNORE } = require('./lib/scope');
+
+/** Is a repo-relative path a command/skill markdown file (the reconcile-consumed signal source)? */
+const isCommandFile = (f) => /(^|\/)(commands|\.claude\/commands|skills)\/[^/]+\.md$/i.test(f);
 
 function detectEcosystem(root) {
   if (exists(path.join(root, 'package.json'))) return 'node';
@@ -125,6 +128,22 @@ function inventory(root) {
   const blocking = [];
   const base = universal(root, files);
   let ext = { bins: [], exports: [], cli: { subcommands: [], flags: [] }, config_keys: [] };
+
+  // Exclusion-consequence degradation (FR103): a signal source emptied BY SCOPE must state its
+  // consequence, so an exclusion can never masquerade as a clean verdict (finding 0028). Command
+  // files are the concrete case reconcile consumes: if the repo HAS command/skill files (ignoring
+  // only build junk) but the resolved scope excluded every one, name the excluding glob and the
+  // consequence rather than silently reporting `command_files: []`. Removing the exclusion (or a
+  // `!re-include`) restores the files and drops this line — the pairing is enforced, not advisory.
+  const allCommandFiles = walkFiles(root, DEFAULT_IGNORE).filter(isCommandFile);
+  if (allCommandFiles.length && !base.command_files.length) {
+    const excludeGlobs = analysisExcludeGlobs(config);
+    const excludedCmds = allCommandFiles.filter(makeIgnore(excludeGlobs));
+    if (excludedCmds.length) {
+      const culprits = excludeGlobs.filter((g) => typeof g === 'string' && g[0] !== '!' && excludedCmds.some((f) => makeIgnore([g])(f)));
+      degraded.push(`scope excludes ${culprits.join(', ') || 'a dev_tooling/ignore glob'} → ${excludedCmds.length} command file(s) are not in the surface inventory; command claims are NOT deterministically checked. Re-include them (e.g. \`!.claude/commands/**\`) to analyze them.`);
+    }
+  }
 
   // A present-but-unparsable primary manifest is the static analog of "the build is broken":
   // the declared surface can't be trusted, so flag it rather than silently under-reporting.

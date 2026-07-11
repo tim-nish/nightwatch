@@ -83,4 +83,29 @@ module.exports = {
     const inv = inventory(r);
     assert.deepStrictEqual(inv.blocking, []);
   },
+
+  // Story 12.5 / FR103 — a scope-emptied signal source states its consequence; it never reads clean.
+  'surface: command files excluded BY SCOPE → a degraded line names the glob + consequence (FR103)': () => {
+    const r = tmpRepo();
+    // Top-level commands/ has no shipped `!re-include` (unlike .claude/commands/**), so a user
+    // exclusion genuinely empties the signal — the 0028 shape: command files present but scope-excluded.
+    write(r, 'commands/ask.md', '# /ask');
+    write(r, 'commands/triage.md', '# /triage');
+    write(r, '.nightwatch/config.yaml', 'dev_tooling: ["commands/**"]\n');
+    const inv = inventory(r);
+    assert.strictEqual(inv.command_files.length, 0, 'scope emptied the command-file signal');
+    const line = inv.degraded.find((d) => /command file\(s\) are not in the surface inventory/.test(d));
+    assert.ok(line, 'a degraded line is present');
+    assert.match(line, /scope excludes .*commands\/\*\*/, 'names the excluding glob');
+    assert.match(line, /command claims are NOT deterministically checked/, 'names the consequence');
+  },
+
+  'surface: removing the exclusion drops the degraded line — the pairing is enforced (FR103)': () => {
+    const r = tmpRepo();
+    write(r, '.claude/commands/ask.md', '# /ask');
+    // No exclusion of the command dir (shipped defaults re-include .claude/commands): analyzed, no line.
+    const inv = inventory(r);
+    assert.ok(inv.command_files.length >= 1, 'command files analyzed when not scope-excluded');
+    assert.ok(!inv.degraded.some((d) => /command file\(s\) are not in the surface inventory/.test(d)), 'no degraded line when the source is populated');
+  },
 };

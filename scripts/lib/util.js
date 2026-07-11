@@ -173,6 +173,11 @@ function makeIgnore(globs) {
  */
 function walkFiles(root, ignoreGlobs) {
   const ignore = makeIgnore(ignoreGlobs);
+  // A `!p` re-include can resurface a subpath under an excluded parent (FR99). Pruning an excluded
+  // DIRECTORY would skip those files (`.claude/commands/**` under an excluded `.claude/**`), so a dir
+  // is pruned only when no negation could re-include a descendant of it; files are matched individually.
+  const negations = (ignoreGlobs || []).filter((g) => typeof g === 'string' && g[0] === '!').map((g) => g.slice(1));
+  const couldReinclude = (rel) => negations.some((n) => n === rel || n.startsWith(rel + '/'));
   const results = [];
   (function rec(dir) {
     let entries;
@@ -182,9 +187,13 @@ function walkFiles(root, ignoreGlobs) {
       if (e.name === '.git') continue;
       const abs = path.join(dir, e.name);
       const rel = path.relative(root, abs).split(path.sep).join('/');
-      if (ignore(rel)) continue;
-      if (e.isDirectory()) rec(abs);
-      else if (e.isFile()) results.push(rel);
+      if (e.isDirectory()) {
+        if (ignore(rel) && !couldReinclude(rel)) continue; // prune only when nothing under it is re-included
+        rec(abs);
+      } else if (e.isFile()) {
+        if (ignore(rel)) continue;
+        results.push(rel);
+      }
     }
   })(root);
   return results.sort();
