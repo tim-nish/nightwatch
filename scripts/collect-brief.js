@@ -15,6 +15,7 @@ const { classifyOpenFindings, newClassificationRows, floorClassifier, runOrdinal
 const { loadConfig } = require('./lib/config');
 const { excludedTopDirs, unclassifiedTopDirs } = require('./lib/scope');
 const { commitPolicyProbe, layoutUpgradeNudge } = require('./lib/probe');
+const { isClean, checkCitations } = require('./lib/lints');
 
 const MEMBER_JOBS = ['repo-reconcile', 'arch-review', 'release-progress'];
 
@@ -41,11 +42,14 @@ function evStr(ev) {
 // and the brief stays byte-deterministic (NFR8).
 function detailsAnchor(f) { return `d-${f.id}`; }
 
-// The imperative summary a reader acts on: the judgment-authored `next_step.summary` when present;
-// otherwise the finding's own title (FR54 fallback). A human-decision finding with no authored
-// summary renders as a decide-action so "the first action" reads as a decision to make (FR57).
+// The imperative summary a reader acts on: the judgment-authored `next_step.summary` when present
+// AND lint-clean; otherwise the finding's own title (FR54 fallback). A summary that fails a
+// deterministic style lint (mid-sentence hard wrap W1, bare `#N` W2) degrades to the mechanical
+// title rather than rendering broken prose (spec writing-harness P4.2) — no model call, no crash. A
+// human-decision finding with no usable summary renders as a decide-action (FR57).
 function actionSummary(f) {
-  if (f.next_step && f.next_step.summary) return f.next_step.summary;
+  const s = f.next_step && f.next_step.summary;
+  if (s && isClean(s)) return s;
   if (f._cls && f._cls.label === 'decision') return `Decide: ${f.title}`;
   return f.title;
 }
@@ -281,6 +285,15 @@ function collect(root, date, { force = false } = {}) {
   const shown = all.slice(0, cap);
   const overflow = all.slice(cap);
 
+  // Citation integrity (spec writing-harness P5): every `#N` the brief's authored prose cites must
+  // match a PR in THIS repo's git history. Deterministic, no network — invalid numbers are flagged
+  // in Machine notes (as "PR N" so the note itself survives) and stripped to `#?` in the rendered
+  // brief, never silently trusted. Scanned from the shown findings' authored fields.
+  const authoredCorpus = shown
+    .map((f) => `${actionSummary(f)} ${f.title || ''} ${(f.next_step && f.next_step.command) || ''}`)
+    .join('\n');
+  const citeCheck = checkCitations(root, authoredCorpus);
+
   // ---- Compose for a 30-second read (spec §6): status, ONE first action, and the release
   // position all land ABOVE the fold; evidence, ids, and degraded notices below it. ----
   const L = [];
@@ -350,6 +363,11 @@ function collect(root, date, { force = false } = {}) {
   if (gcCandidates.length) {
     notes.push(`- Collected ${gcCandidates.length} stale patch${gcCandidates.length === 1 ? '' : 'es'} (finding resolved/dismissed): ${gcCandidates.map((p) => `\`${p}\``).join(', ')}.`);
   }
+  // Citation integrity (spec writing-harness P5): name every cited number that matches no PR in this
+  // repo's git history; those numbers are stripped to `#?` in the brief below. Byte-deterministic.
+  if (citeCheck.invalid.length) {
+    notes.push(`- Citation check: ${citeCheck.invalid.map((n) => `PR ${n}`).join(', ')} cite no PR/commit in this repo — rendered without their number.`);
+  }
   // Layout-upgrade nudge (spec runtime-layout P4): exactly one line pointing a pre-layout install
   // (legacy paths in use, or the orientation README missing on a repo with memory) at
   // `init --update`. Detection and reporting only — no overnight writes; a current install gets none.
@@ -367,7 +385,13 @@ function collect(root, date, { force = false } = {}) {
   // checkboxes — either records the same ledger feedback.
   L.push('---', `_Review interactively with \`/nightwatch review\` — or mark boxes by hand (\`[x]\` acted-on, \`[-]\` dismiss); the next run backfills the ledger. Total findings: ${all.length}, shown: ${shown.length}, cap: ${cap}._`);
 
-  const briefText = L.join('\n') + '\n';
+  let briefText = L.join('\n') + '\n';
+  // Strip any invalid citation's number to `#?` (spec P5) — the Machine-notes line above named them
+  // as "PR N" (no `#`), so it is untouched; every other bad `#N` in the visible prose is neutralized.
+  if (citeCheck.invalid.length) {
+    const bad = new Set(citeCheck.invalid);
+    briefText = briefText.replace(/#(\d+)/g, (whole, n) => (bad.has(Number(n)) ? '#?' : whole));
+  }
 
   // ---- Write brief + MORNING.md ----
   const briefsDir = path.join(nwDir(root), 'briefs');
