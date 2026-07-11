@@ -26,4 +26,9 @@ release:
   definition_of_done:
     - "quickstart reproduces on a fresh clone in 15 minutes"
     - "all commands have specs and the reconciler reports 0 drift"
+  milestones:                          # optional: the ordered release journey (file order = road order)
+    - name: "Commands specified & drift-free"
+      criteria: ["all commands have specs and the reconciler reports 0 drift"]
+    - name: "Quickstart proven on a fresh clone"
+      criteria: ["quickstart reproduces on a fresh clone in 15 minutes"]
 ```
