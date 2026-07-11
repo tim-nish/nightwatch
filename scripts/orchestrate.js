@@ -26,6 +26,7 @@ const {
 } = require('./lib/schedule');
 const { loadConfig } = require('./lib/config');
 const { scopePreview } = require('./lib/scope');
+const { carveRecheckBudget } = require('./lib/lifecycle');
 const { writeStubBrief } = require('./collect-brief');
 
 /** Per-member execution parameters, read straight from config (presentation only). */
@@ -35,9 +36,19 @@ function memberDetail(job, config) {
   const tm = config.timeout_minutes && typeof config.timeout_minutes === 'object'
     ? config.timeout_minutes[job]
     : config.timeout_minutes;
+  // Reserve a slice of the member's budget for re-verifying carried-forward open findings (spec
+  // finding-lifecycle P3). Carved off the top so `discovery_budget` — what new-claim discovery may
+  // spend — is what's left AFTER the reserve, making "old findings can't be starved" mechanical.
+  const budget = Number.isFinite(bt) ? bt : null;
+  const fraction = Number.isFinite(config.recheck_budget) ? config.recheck_budget : 0;
+  const { reserve, discovery } = budget != null
+    ? carveRecheckBudget(budget, fraction)
+    : { reserve: null, discovery: null };
   return {
     job,
-    budget_tokens: Number.isFinite(bt) ? bt : null,
+    budget_tokens: budget,
+    recheck_reserve: reserve,
+    discovery_budget: discovery,
     effort: typeof ef === 'string' ? ef : null,
     timeout_minutes: Number.isFinite(tm) ? tm : null,
   };

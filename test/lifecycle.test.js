@@ -7,11 +7,13 @@ const assert = require('assert');
 const { tmpRepo, write, gitInit, commit } = require('./helpers');
 const {
   openFindings, classifyOpenFindings, newClassificationRows, lifecycleCounts,
+  deterministicFloor, floorClassifier, carveRecheckBudget, planRecheck,
 } = require('../scripts/lib/lifecycle');
 const { openTracker } = require('../scripts/lib/tracker');
 const { collect } = require('../scripts/collect-brief');
 
 function fRow(id, over) { return Object.assign({ type: 'finding', id, kind: 'drift', severity: 2, date: '2026-07-09' }, over); }
+function drift(id, evidence, text) { return { id, kind: 'drift', evidence, text }; }
 
 module.exports = {
   // ---- open-set computation (pure) ----------------------------------------------------------
@@ -96,7 +98,92 @@ module.exports = {
     }
   },
 
+  // ---- P2: deterministic re-verification floor ----------------------------------------------
+  'floor: a drift finding whose cited path is gone → resolved (absence conclusive)': () => {
+    const r = tmpRepo();
+    const v = deterministicFloor(drift('RC-a', [{ path: 'gone.md', line: 3 }], 'the claim'), r);
+    assert.strictEqual(v.classification, 'resolved');
+    assert.match(v.evidence, /gone\.md no longer exists/);
+  },
+
+  'floor: a drift finding whose cited text is removed → resolved naming the locus': () => {
+    const r = tmpRepo();
+    write(r, 'README.md', 'line 1\nline 2\nunrelated\nline 4\n');
+    const v = deterministicFloor(drift('RC-a', [{ path: 'README.md', line: 2 }], 'the drifted claim'), r);
+    assert.strictEqual(v.classification, 'resolved');
+    assert.match(v.evidence, /cited text no longer present at README\.md:2/);
+  },
+
+  'floor: cited text still present at/near the cited line → still-open deterministic (the RC-615fba check)': () => {
+    const r = tmpRepo();
+    write(r, 'README.md', 'a\nb\n--flag still documented here\nd\n');
+    const v = deterministicFloor(drift('RC-a', [{ path: 'README.md', line: 3 }], '--flag still documented'), r);
+    assert.deepStrictEqual(v, { classification: 'still-open', method: 'deterministic' });
+  },
+
+  'floor: a non-drift kind with a missing path escalates (absence inconclusive)': () => {
+    const r = tmpRepo();
+    const v = deterministicFloor({ id: 'AR-a', kind: 'arch', evidence: [{ path: 'gone.js' }], text: 'x' }, r);
+    assert.strictEqual(v.classification, 'escalate');
+  },
+
+  'floor: no checkable locus → escalate': () => {
+    assert.strictEqual(deterministicFloor({ id: 'X', kind: 'drift', evidence: [] }, tmpRepo()).classification, 'escalate');
+  },
+
+  'floor: path present but no recorded cited text → still-open (conservative)': () => {
+    const r = tmpRepo();
+    write(r, 'a.js', 'still here\n');
+    const v = deterministicFloor({ id: 'RC-a', kind: 'drift', evidence: [{ path: 'a.js' }] }, r);
+    assert.strictEqual(v.classification, 'still-open');
+  },
+
+  'floor: floorClassifier maps escalate → not-re-examined unless a judgment verdict is supplied': () => {
+    const r = tmpRepo();
+    const f = { id: 'AR-a', kind: 'arch', evidence: [{ path: 'gone.js' }], text: 'x' };
+    assert.strictEqual(floorClassifier(r)(f).classification, 'not-re-examined');
+    const judged = { 'AR-a': { classification: 'still-open', method: 'judgment' } };
+    assert.deepStrictEqual(floorClassifier(r, { judged })(f), { classification: 'still-open', method: 'judgment' });
+  },
+
+  // ---- P3: budget carve + oldest-first recheck planning -------------------------------------
+  'budget: recheck reserve is carved off the top before discovery': () => {
+    assert.deepStrictEqual(carveRecheckBudget(200000, 0.15), { reserve: 30000, discovery: 170000 });
+    assert.deepStrictEqual(carveRecheckBudget(100000, 0), { reserve: 0, discovery: 100000 });
+    assert.deepStrictEqual(carveRecheckBudget(0, 0.15), { reserve: 0, discovery: 0 });
+    assert.deepStrictEqual(carveRecheckBudget(100, 5), { reserve: 100, discovery: 0 }, 'fraction clamped to 1');
+  },
+
+  'budget: planRecheck reaches oldest-first until the reserve is spent; the rest skip': () => {
+    const escalated = ['a', 'b', 'c', 'd'].map((id) => ({ id })); // oldest-first
+    const { reached, skipped } = planRecheck(escalated, { reserve: 25, costPer: 10 });
+    assert.deepStrictEqual(reached.map((f) => f.id), ['a', 'b'], 'two fit into 25 at cost 10');
+    assert.deepStrictEqual(skipped.map((f) => f.id), ['c', 'd'], 'the rest are not-re-examined');
+  },
+
+  // ---- evidence persistence: the floor can re-check from the ledger alone --------------------
+  'lifecycle: recordFindings persists evidence + cited text so openFindings carries them': () => {
+    const t = openTracker(tmpRepo(), { tracking: { backend: 'markdown' } });
+    t.recordFindings([{ id: 'RC-a', kind: 'drift', severity: 2, evidence: [{ path: 'README.md', line: 4 }], text: 'cited' }], { date: '2026-07-09', job: 'repo-reconcile' });
+    const open = t.openFindings();
+    assert.strictEqual(open.length, 1);
+    assert.deepStrictEqual(open[0].evidence, [{ path: 'README.md', line: 4 }]);
+    assert.strictEqual(open[0].text, 'cited');
+  },
+
   // ---- end-to-end via collect-brief (the run-end job) ---------------------------------------
+  'floor e2e: a carried-forward drift finding whose cited path vanished is resolved by collect-brief': () => {
+    const r = tmpRepo();
+    gitInit(r); write(r, 'keep.js', '1\n'); commit(r, 'repo');
+    const store = openTracker(r, { tracking: { backend: 'markdown' } });
+    // Recorded on a prior date, citing a path that does not exist this run → deterministic resolved.
+    store.recordFindings([{ id: 'RC-gone', kind: 'drift', severity: 2, evidence: [{ path: 'deleted.md', line: 1 }], text: 'old claim' }], { date: '2026-07-09', job: 'repo-reconcile' });
+    collect(r, '2026-07-10');
+    const rows = openTracker(r).readLedger();
+    assert.ok(rows.some((x) => x.type === 'resolution' && x.id === 'RC-gone'), 'a resolution row was written');
+    assert.deepStrictEqual(openTracker(r).openFindings().map((o) => o.id), [], 'the finding left the open set');
+  },
+
   'lifecycle: a carried-forward finding not re-observed gets one recheck skipped row; re-run adds none': () => {
     const r = tmpRepo();
     gitInit(r); write(r, 'src/a.js', '1\n'); commit(r, 'repo');

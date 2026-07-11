@@ -15,6 +15,10 @@ const { DEFAULT_IGNORE, DEFAULT_DEV_TOOLING, extendGlobs } = require('./scope');
 const DEFAULTS = Object.freeze({
   cadence: { 'repo-reconcile': 'nightly', 'arch-review': 'weekly', 'release-progress': 'nightly' },
   budget_tokens: { 'repo-reconcile': 200000, 'arch-review': 300000, 'release-progress': 100000 },
+  // Fraction of a job's budget_tokens reserved for re-verifying carried-forward open findings
+  // (spec finding-lifecycle P3). Carved off BEFORE new-claim discovery so a chatty night can never
+  // starve old findings; 0 disables the judgment recheck (the free deterministic floor still runs).
+  recheck_budget: 0.15,
   effort: { 'repo-reconcile': 'medium', 'arch-review': 'high', 'release-progress': 'medium' },
   caps: { brief_total: 25, reconcile: 10, arch_candidates: 7 },
   // Two-tier analysis scoping (FR42). Shipped defaults live in scope.js; user lists in

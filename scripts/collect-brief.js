@@ -11,7 +11,7 @@ const yaml = require('js-yaml');
 const { parseArgs, repoRoot, todayISO, nwDir, outDir, ensureDir, readFileSafe, readJSONSafe, exists, progressPercent } = require('./lib/util');
 const { readAllFindings } = require('./lib/findings');
 const { openTracker, releaseReadPath } = require('./lib/tracker');
-const { classifyOpenFindings, newClassificationRows } = require('./lib/lifecycle');
+const { classifyOpenFindings, newClassificationRows, floorClassifier } = require('./lib/lifecycle');
 const { loadConfig } = require('./lib/config');
 const { excludedTopDirs, unclassifiedTopDirs } = require('./lib/scope');
 
@@ -221,6 +221,20 @@ function computeDemotions(root, store) {
   return flags;
 }
 
+// The budgeted judgment recheck (spec finding-lifecycle P3) is the owning job's work and records its
+// verdicts through the store out-of-band; here we read back this run's `judgment`-method recheck
+// rows so the run-end classification can honor them instead of falling to `not-re-examined`. A
+// judgment `resolution` already removes the finding from the open set, so only rechecks matter.
+function collectJudgmentVerdicts(rows, date) {
+  const judged = {};
+  for (const r of rows || []) {
+    if (r && r.type === 'recheck' && r.date === date && r.method === 'judgment' && r.id) {
+      judged[r.id] = { classification: 'still-open', method: 'judgment' };
+    }
+  }
+  return judged;
+}
+
 function collect(root, date, { force = false } = {}) {
   const { config, authority } = loadConfig(root);
   const cap = (config.caps && config.caps.brief_total) || 25;
@@ -341,14 +355,17 @@ function collect(root, date, { force = false } = {}) {
       store.recordFindings(doc.findings || [], { date, job: doc.job });
     }
     store.recordRun({ date, job: 'collect-brief', shown: shown.length, total: all.length, cap });
-    // Per-run classification of the carried-forward open set (spec P1): an id tonight's docs
-    // re-surfaced is `re-observed` (its finding row already dedupes); every other open finding
-    // falls to the classifier — for now `not-re-examined` (the deterministic floor + budgeted
-    // judgment recheck arrive in Story 9.2). Rows are keyed (type,id,date) so a forced re-run never
+    // Per-run classification of the carried-forward open set (spec P1/P2): an id tonight's docs
+    // re-surfaced is `re-observed` (its finding row already dedupes); every other open finding runs
+    // through the deterministic floor (free, zero tokens) — cited path/text gone → `resolved`,
+    // still present → `still-open (deterministic)`, unresolvable → escalated. An escalated finding
+    // is `not-re-examined` unless the owning job recorded a budgeted judgment verdict for it this
+    // run (folded in via `judged`). Rows are keyed (type,id,date) so a forced re-run never
     // duplicates them, and no historical row is rewritten. So no open finding silently vanishes.
     const reobserved = new Set();
     for (const doc of docs) for (const f of doc.findings || []) reobserved.add(f.id);
-    const results = classifyOpenFindings({ open: openBefore, reobserved, date });
+    const judged = collectJudgmentVerdicts(store.readLedger(), date);
+    const results = classifyOpenFindings({ open: openBefore, reobserved, date, classifier: floorClassifier(root, { judged }) });
     for (const row of newClassificationRows(results, store.readLedger())) {
       if (row.type === 'resolution') store.recordResolution(row); else store.recordRecheck(row);
     }

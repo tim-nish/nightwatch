@@ -6,10 +6,13 @@
 // them and produce the classification rows the store appends. So an unfixed finding can never
 // simply not be looked at again (0019 gap 1): every run ends by classifying every open finding.
 //
-// Story 9.1 ships P1 (carry-forward + classification rows + exactly-once). The deterministic
-// re-verification floor (P2) and budgeted judgment recheck (P3) that decide `resolved` vs
-// `still-open` plug into `classifyOpenFindings`'s `classifier` in Story 9.2; until then the default
-// classifier is deliberately conservative — "when in doubt, not-re-examined" (spec non-goals).
+// Story 9.1 ships P1 (carry-forward + classification rows + exactly-once). Story 9.2 adds the
+// deterministic re-verification floor (P2 — free, zero tokens) and the budgeted judgment-recheck
+// arithmetic (P3), which plug into `classifyOpenFindings`'s `classifier`. Judgment itself spends
+// tokens and is the owning job/subagent's work; the scripts here own the free floor and the budget
+// accounting, deferring anything inconclusive to `escalate` — never a silent close.
+const path = require('path');
+const { readFileSafe, exists } = require('./util');
 
 /** The four per-run states every open finding is classified into, exactly once (spec P1 table). */
 const CLASSIFICATIONS = ['re-observed', 'resolved', 'still-open', 'not-re-examined'];
@@ -38,12 +41,19 @@ function openFindings(rows) {
     const d = r.date || '';
     const cur = byId.get(r.id);
     if (!cur) {
-      byId.set(r.id, { id: r.id, kind: r.kind, severity: r.severity, firstDate: d, lastDate: d });
+      byId.set(r.id, {
+        id: r.id, kind: r.kind, severity: r.severity, firstDate: d, lastDate: d,
+        evidence: Array.isArray(r.evidence) ? r.evidence : [],
+        text: typeof r.text === 'string' ? r.text : undefined,
+      });
     } else {
       if (d && (!cur.firstDate || d < cur.firstDate)) cur.firstDate = d;
       if (d && d > cur.lastDate) cur.lastDate = d;
       if (cur.kind == null && r.kind != null) cur.kind = r.kind;
       if (cur.severity == null && r.severity != null) cur.severity = r.severity;
+      // A later finding row carries the freshest cited evidence/text — the floor checks against it.
+      if (Array.isArray(r.evidence) && r.evidence.length) cur.evidence = r.evidence;
+      if (typeof r.text === 'string') cur.text = r.text;
     }
   }
   return [...byId.values()].sort(
@@ -90,6 +100,140 @@ function classifyOpenFindings({ open, reobserved, date, classifier = defaultClas
   return out;
 }
 
+// ---- P2: deterministic re-verification floor (zero tokens) --------------------------------
+
+// Kinds for which the conclusive ABSENCE of the cited evidence means the finding is resolved (spec
+// P2: "a drift finding whose drifted text is gone"). For every other kind, absence is inconclusive
+// and the finding is escalated to the judgment recheck rather than auto-closed (spec non-goals).
+const ABSENCE_CONCLUSIVE = new Set(['drift']);
+// Window (± lines) around the cited line within which the cited text still counts as "present at or
+// near the cited line" (spec P2). A finding with no cited line is checked against the whole file.
+const NEAR_LINES = 3;
+
+/** First evidence locus carrying a path (findings store `{path, line?}` objects, never bare strings). */
+function primaryLocus(finding) {
+  const ev = (finding && finding.evidence) || [];
+  for (const e of ev) if (e && typeof e.path === 'string' && e.path) return e;
+  return null;
+}
+
+/** Is `needle` present in `text`, and — when `line` is given — within ±NEAR_LINES of it? */
+function textPresentNear(text, needle, line) {
+  const norm = String(needle).trim();
+  if (!norm) return false;
+  if (!Number.isFinite(line)) return text.includes(norm);
+  const lines = text.split('\n');
+  const lo = Math.max(0, (line - 1) - NEAR_LINES);
+  const hi = Math.min(lines.length, line + NEAR_LINES);
+  return lines.slice(lo, hi).join('\n').includes(norm);
+}
+
+/**
+ * The deterministic re-verification floor (spec P2). A pure filesystem check over an open finding's
+ * cited evidence — zero tokens — returning one of:
+ *   - `resolved`     the cited path is gone, or the cited `text` is no longer present at/near the
+ *                    cited line, AND the finding's kind makes absence conclusive (drift). Carries an
+ *                    evidence clause naming why.
+ *   - `still-open`   the cited evidence is still present (path exists; cited text, if recorded, still
+ *                    at/near the line). Method `deterministic`. This is the check that would have
+ *                    caught the RC-615fba disappearance.
+ *   - `escalate`     unresolvable deterministically (no cited path, or absence for an inconclusive
+ *                    kind) → hand to the budgeted judgment recheck (P3).
+ * `read`/`fileExists` are injectable for tests; they default to the real filesystem under `root`.
+ * @param {{kind?:string, evidence?:Array<{path:string,line?:number}>, text?:string}} finding
+ * @param {string} root Repo root the evidence paths are relative to.
+ * @param {{read?:(rel:string)=>(string|null), fileExists?:(rel:string)=>boolean}} [io]
+ * @returns {{classification:'resolved'|'still-open'|'escalate', method?:string, evidence?:string}}
+ */
+function deterministicFloor(finding, root, io = {}) {
+  const read = io.read || ((rel) => readFileSafe(path.join(root, rel.split('/').join(path.sep))));
+  const fileExists = io.fileExists || ((rel) => exists(path.join(root, rel.split('/').join(path.sep))));
+  const conclusive = ABSENCE_CONCLUSIVE.has(finding && finding.kind);
+  const loc = primaryLocus(finding);
+  if (!loc) return { classification: 'escalate' }; // no checkable locus → unresolvable
+
+  const at = loc.line != null ? `${loc.path}:${loc.line}` : loc.path;
+  if (!fileExists(loc.path)) {
+    return conclusive
+      ? { classification: 'resolved', evidence: `cited path ${loc.path} no longer exists` }
+      : { classification: 'escalate' };
+  }
+
+  const cited = finding && typeof finding.text === 'string' ? finding.text : '';
+  if (cited) {
+    const text = read(loc.path);
+    if (text != null && textPresentNear(text, cited, loc.line)) {
+      return { classification: 'still-open', method: 'deterministic' };
+    }
+    // Cited text gone from the file → resolved iff absence is conclusive for the kind, else escalate.
+    return conclusive
+      ? { classification: 'resolved', evidence: `cited text no longer present at ${at}` }
+      : { classification: 'escalate' };
+  }
+
+  // Path present but no recorded cited text to check: the cited artifact still exists, so hold it
+  // still-open (deterministic) rather than close it — "when in doubt, still-open" (spec non-goals).
+  return { classification: 'still-open', method: 'deterministic' };
+}
+
+/**
+ * Build a `classifyOpenFindings` classifier from the deterministic floor. `resolved`/`still-open`
+ * pass through; `escalate` maps to `not-re-examined` UNLESS a judgment verdict for the finding was
+ * supplied in `judged` (id → {classification, method?, evidence?}) — that is how the owning job's
+ * budgeted judgment recheck (P3) feeds its out-of-band results back into the mechanical run-end
+ * classification. So the free floor always runs; judgment only overrides the escalated tail.
+ * @param {string} root
+ * @param {{judged?: Record<string, any>, io?: object}} [opts]
+ */
+function floorClassifier(root, opts = {}) {
+  const judged = opts.judged || {};
+  return (finding) => {
+    const floor = deterministicFloor(finding, root, opts.io);
+    if (floor.classification === 'resolved' || floor.classification === 'still-open') return floor;
+    const j = judged[finding.id];
+    if (j && (j.classification === 'resolved' || j.classification === 'still-open')) {
+      return j.classification === 'still-open' ? { classification: 'still-open', method: j.method || 'judgment' } : j;
+    }
+    return { classification: 'not-re-examined', method: 'skipped' };
+  };
+}
+
+// ---- P3: budgeted judgment recheck (bounded, oldest-first) ---------------------------------
+
+/**
+ * Carve the recheck reserve from a job's token budget (spec P3). The reserve is taken BEFORE
+ * new-claim discovery, so old open findings cannot be starved by a chatty night. `fraction` is
+ * clamped to [0,1]; a non-finite budget yields a zero reserve.
+ * @param {number} budgetTokens @param {number} fraction
+ * @returns {{reserve:number, discovery:number}}
+ */
+function carveRecheckBudget(budgetTokens, fraction) {
+  const b = Number.isFinite(budgetTokens) && budgetTokens > 0 ? budgetTokens : 0;
+  const fr = Number.isFinite(fraction) ? Math.min(1, Math.max(0, fraction)) : 0;
+  const reserve = Math.floor(b * fr);
+  return { reserve, discovery: b - reserve };
+}
+
+/**
+ * Plan which escalated findings the reserve reaches (spec P3): process oldest-first, spending a flat
+ * `costPer` tokens each until the reserve is exhausted; everything the slice does not reach is
+ * `not-re-examined`. Deterministic — `escalated` is expected oldest-first (as `openFindings` returns).
+ * @param {any[]} escalated Findings the floor escalated, oldest-first.
+ * @param {{reserve:number, costPer:number}} budget
+ * @returns {{reached:any[], skipped:any[]}}
+ */
+function planRecheck(escalated, { reserve, costPer }) {
+  const reached = [];
+  const skipped = [];
+  const cost = Number.isFinite(costPer) && costPer > 0 ? costPer : Infinity;
+  let spent = 0;
+  for (const f of escalated || []) {
+    if (spent + cost <= reserve) { reached.push(f); spent += cost; }
+    else skipped.push(f);
+  }
+  return { reached, skipped };
+}
+
 /**
  * Filter classification results to the rows not already in the ledger, keyed by (type,id,date) — so
  * a re-run (even a forced one) never rewrites or duplicates a historical classification row (spec P1
@@ -134,4 +278,5 @@ function lifecycleCounts(results) {
 module.exports = {
   CLASSIFICATIONS, RECHECK_METHODS,
   openFindings, classifyOpenFindings, newClassificationRows, defaultClassifier, lifecycleCounts,
+  deterministicFloor, floorClassifier, carveRecheckBudget, planRecheck,
 };

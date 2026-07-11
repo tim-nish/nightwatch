@@ -49,6 +49,13 @@ module.exports = {
     assert.strictEqual(phase, 'hardening');
   },
 
+  'config: recheck_budget defaults to 0.15, overridable via config.yaml': () => {
+    const r = tmpRepo();
+    assert.strictEqual(loadConfig(r).config.recheck_budget, 0.15, 'shipped default');
+    write(r, '.nightwatch/config.yaml', 'recheck_budget: 0.25\n');
+    assert.strictEqual(loadConfig(r).config.recheck_budget, 0.25, 'config.yaml overrides');
+  },
+
   'config: tracking.backend defaults to markdown, overridable via config.yaml': () => {
     const r = tmpRepo();
     assert.strictEqual(loadConfig(r).config.tracking.backend, 'markdown', 'shipped default');

@@ -50,6 +50,9 @@ module.exports = {
     assert.deepStrictEqual(res.members.map((m) => m.job), ['repo-reconcile', 'arch-review', 'release-progress']);
     const rr = res.members.find((m) => m.job === 'repo-reconcile');
     assert.strictEqual(rr.budget_tokens, 200000);
+    // Recheck reserve (spec finding-lifecycle P3) carved off the top before discovery: 15% of 200k.
+    assert.strictEqual(rr.recheck_reserve, 30000, 'reserve = 0.15 × 200k');
+    assert.strictEqual(rr.discovery_budget, 170000, 'discovery = budget − reserve');
     assert.strictEqual(rr.effort, 'medium');
     assert.strictEqual(rr.timeout_minutes, 30);
     assert.strictEqual(res.estimate.token_ceiling, 600000, 'ceiling = 200k+300k+100k');
