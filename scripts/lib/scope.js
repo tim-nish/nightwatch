@@ -46,8 +46,8 @@ const DEFAULT_DEV_TOOLING = Object.freeze([
  */
 function extendGlobs(defaults, userList) {
   const positives = new Set(defaults);
+  const negations = [];
   if (Array.isArray(userList)) {
-    const negations = [];
     for (const raw of userList) {
       if (typeof raw !== 'string') continue;
       const s = raw.trim();
@@ -55,9 +55,17 @@ function extendGlobs(defaults, userList) {
       if (s[0] === '!') negations.push(s.slice(1).trim());
       else positives.add(s);
     }
-    for (const n of negations) positives.delete(n);
   }
-  return [...positives].sort();
+  // A negation that EXACTLY matches a positive cancels it — byte-identical to the pre-FR99 behavior.
+  // A negation with no exact positive (a re-included SUBPATH of a broader glob, e.g.
+  // `!.claude/commands/**` under `.claude/**`) is kept as a `!` entry and resolved by the matcher's
+  // specificity precedence at match time (makeIgnore, FR99).
+  const kept = [];
+  for (const n of negations) {
+    if (positives.has(n)) positives.delete(n);
+    else kept.push('!' + n);
+  }
+  return [...positives, ...kept].sort();
 }
 
 /**
@@ -110,7 +118,12 @@ function excludedTopDirs(root, config, listTop) {
  *             analyzed:{dir:string,files:number}[], excluded:{dir:string,files:number}[] }}
  */
 function scopePreview(root, config) {
-  const isExcluded = makeIgnore(analysisExcludeGlobs(config));
+  const globs = analysisExcludeGlobs(config);
+  const isExcluded = makeIgnore(globs);
+  // The "once excluded, all descendants excluded" optimization is only valid when no re-include can
+  // resurface a subpath. With a `!` negation present (FR99), match every path so a re-included
+  // subtree (e.g. `.claude/commands/**` under an excluded `.claude/**`) is correctly analyzed.
+  const canInherit = !globs.some((g) => typeof g === 'string' && g[0] === '!');
   const analyzed = new Map();
   const excluded = new Map();
   const bump = (m, top) => m.set(top, (m.get(top) || 0) + 1);
@@ -122,9 +135,9 @@ function scopePreview(root, config) {
       const rel = relDir ? `${relDir}/${e.name}` : e.name;
       const top = rel.indexOf('/') === -1 ? rel : rel.slice(0, rel.indexOf('/'));
       // A file matches its own glob; a directory matches via a probe path so `node_modules/**`
-      // catches `node_modules`. Exclusion is inherited once true.
+      // catches `node_modules`. Exclusion is inherited once true — but only when no re-include exists.
       const excl = forced || isExcluded(rel) || isExcluded(`${rel}/__scope_probe__`);
-      if (e.isDirectory()) rec(path.join(dir, e.name), rel, excl);
+      if (e.isDirectory()) rec(path.join(dir, e.name), rel, canInherit ? excl : false);
       else if (e.isFile()) bump(excl ? excluded : analyzed, top);
     }
   })(root, '', false);

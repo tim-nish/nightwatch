@@ -7,9 +7,9 @@
 const assert = require('assert');
 const { tmpRepo, write } = require('./helpers');
 const {
-  DEFAULT_IGNORE, DEFAULT_DEV_TOOLING, extendGlobs, analysisExcludeGlobs, excludedTopDirs,
+  DEFAULT_IGNORE, DEFAULT_DEV_TOOLING, extendGlobs, analysisExcludeGlobs, excludedTopDirs, scopePreview,
 } = require('../scripts/lib/scope');
-const { walkFiles } = require('../scripts/lib/util');
+const { walkFiles, makeIgnore } = require('../scripts/lib/util');
 const { loadConfig } = require('../scripts/lib/config');
 const { collect } = require('../scripts/collect-brief');
 
@@ -40,6 +40,42 @@ module.exports = {
     const out = extendGlobs(DEFAULT_IGNORE, ['tmp/**', 'tmp/**', '!tmp/**']);
     assert.ok(!out.includes('tmp/**'), 'a later !p cancels an earlier p');
     assert.deepStrictEqual(out, [...new Set(out)].sort(), 'deduped and stably sorted');
+  },
+
+  // ---- Story 12.1 / FR99 — match-based negation: subpath re-includes ------------------------
+
+  'extendGlobs: a subpath negation with no exact positive is kept as a `!` entry (FR99)': () => {
+    const out = extendGlobs(DEFAULT_DEV_TOOLING, ['!.claude/commands/**']);
+    assert.ok(out.includes('.claude/**'), 'the broader parent stays excluded');
+    assert.ok(out.includes('!.claude/commands/**'), 'the subpath re-include is preserved for the matcher');
+  },
+
+  'makeIgnore: `!.claude/commands/**` re-includes that subtree under an excluded `.claude/**` (FR99)': () => {
+    const isExcluded = makeIgnore(extendGlobs(DEFAULT_DEV_TOOLING, ['!.claude/commands/**']));
+    assert.strictEqual(isExcluded('.claude/settings.json'), true, 'the rest of .claude/** stays excluded');
+    assert.strictEqual(isExcluded('.claude/commands/ask.md'), false, 'the re-included subtree is analyzed (most specific wins)');
+    assert.strictEqual(isExcluded('.claude/commands/skills/x.md'), false, 're-include is inherited down the subtree');
+  },
+
+  'makeIgnore: an exact `!q_a/**` re-include resolves byte-identically to today (FR99, NFR8)': () => {
+    const isExcluded = makeIgnore(extendGlobs(DEFAULT_DEV_TOOLING, ['!q_a/**']));
+    assert.strictEqual(isExcluded('q_a/2026/q.md'), false, 'q_a re-included by the exact cancel');
+    assert.strictEqual(isExcluded('_bmad/x.md'), true, 'other defaults still excluded');
+  },
+
+  'scopePreview: a re-included subpath appears under analyzed with its own count (FR99)': () => {
+    const r = tmpRepo();
+    write(r, '.claude/settings.json', '{}');
+    write(r, '.claude/commands/ask.md', '# ask');
+    write(r, '.claude/commands/triage.md', '# triage');
+    write(r, 'src/app.js', '1');
+    const cfg = { ignore: [], dev_tooling: extendGlobs(DEFAULT_DEV_TOOLING, ['!.claude/commands/**']) };
+    const preview = scopePreview(r, cfg);
+    const analyzed = Object.fromEntries(preview.analyzed.map((x) => [x.dir, x.files]));
+    const excluded = Object.fromEntries(preview.excluded.map((x) => [x.dir, x.files]));
+    assert.strictEqual(analyzed['.claude'], 2, 'the two command files are analyzed under .claude');
+    assert.strictEqual(excluded['.claude'], 1, 'the rest of .claude (settings.json) stays excluded');
+    assert.strictEqual(analyzed['src'], 1, 'ordinary product is analyzed');
   },
 
   'analysisExcludeGlobs: unions both resolved tiers (deduped, sorted)': () => {

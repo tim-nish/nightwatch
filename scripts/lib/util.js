@@ -137,11 +137,33 @@ function globToRegExp(glob) {
   return new RegExp('^' + re + '$');
 }
 
+/** Length of a glob's literal prefix (chars before the first wildcard) — its specificity (FR99). */
+function literalPrefixLen(glob) {
+  const m = /[*?]/.exec(glob);
+  return m ? m.index : glob.length;
+}
+
+/**
+ * Build a path-exclusion predicate from a glob list. A plain positive glob excludes matching paths;
+ * a `!p` entry RE-INCLUDES matching paths (gitignore-style, FR99). When both a positive and a
+ * negation match a path, the **most specific** (longest literal prefix) wins, and a tie goes to the
+ * negation — so `!.claude/commands/**` re-includes that subtree under an excluded `.claude/**`. A
+ * list with no `!` entry behaves exactly as a plain any-match exclude (backward compatible).
+ */
 function makeIgnore(globs) {
-  const res = (globs || []).map(globToRegExp);
+  const pats = (globs || []).map((g) => {
+    const neg = typeof g === 'string' && g[0] === '!';
+    const body = neg ? g.slice(1) : g;
+    return { neg, re: globToRegExp(body), spec: literalPrefixLen(body) };
+  });
   return (relPath) => {
     const p = relPath.split(path.sep).join('/');
-    return res.some((r) => r.test(p)) ;
+    let best = null;
+    for (const pt of pats) {
+      if (!pt.re.test(p)) continue;
+      if (best === null || pt.spec > best.spec || (pt.spec === best.spec && pt.neg && !best.neg)) best = pt;
+    }
+    return best !== null && !best.neg;
   };
 }
 
