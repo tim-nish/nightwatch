@@ -138,39 +138,43 @@ guesses.
 ## What lands in your repo
 
 Everything lives under `.nightwatch/` (the single home — zero Nightwatch files in the repo root
-by default). Each file names its own moment, in three tiers: **read** in the morning, **edit** in
-the daytime, or **machine memory** you never open. `init` writes a `.nightwatch/README.md` with
-this same map, so the directory explains itself.
+by default). Each file answers four questions — **edit?** · **owner** · **safe to delete?** ·
+**committed?** — grouped by when you'd open it. `init` writes a `.nightwatch/README.md` with this
+same four-column map, so the directory explains itself.
 
-```text
-.nightwatch/
-  README.md           # ~15-line orientation: the tier map below (written by init)
-  # ── read (morning) ──
-  MORNING.md          # THE file: a byte-identical copy of the newest dated brief — open this
-  out/*.patch         # proposed fixes; only when the brief links one, followed by its full path
-  # ── edit (daytime — overnight runs never rewrite your content) ──
-  STATE.md            # your declarations (drafted by /nightwatch init)
-  config.yaml         # operational knobs; nothing here changes overnight
-  RELEASE.md          # release tracker; machine-maintained around your human-owned Notes tail
-  # ── machine memory (never open) ──
-  briefs/<date>.md    # dated copies of each brief (committed — they're memory); never open
-  ledger.jsonl        # every finding + your checkbox verdicts, backfilled — never open or edit
-  state.json          # the machine's scheduling cursor — never open
-  out/                # internal per-run JSON, gitignored — never browse (see the patch exception)
-```
+**Read (morning)**
 
-- **`MORNING.md`** is a **byte-identical copy of the newest file in `briefs/`** — open `MORNING.md`,
-  commit `briefs/`, never read both.
-- **`STATE.md` is yours; `state.json` is the machine's scheduling cursor.**
-  Unrelated despite the name.
-- **`out/`** holds internal per-run JSON (gitignored) — **never browsed** — **except `*.patch`
-  files**, which are proposals the brief links by full repo-relative path when one is ready; you
-  reach a patch by following that link, never by browsing `out/`.
-- **`ledger.jsonl`, `state.json`, `out/*.json`, and `briefs/` are never opened or edited by hand** —
-  they are the system's memory, kept for itself.
+| file | edit? | owner | safe to delete? | committed? |
+|------|-------|-------|-----------------|------------|
+| `MORNING.md` | no | machine | yes — rewritten next run | no |
+| `runtime/out/*.patch` | no | machine | yes | no |
 
-Commit the briefs and the ledger — they are the system's memory. Gitignore `.nightwatch/out/`
-(`/nightwatch init` adds the nested entry for you).
+**Edit (daytime — overnight runs never rewrite your content)**
+
+| file | edit? | owner | safe to delete? | committed? |
+|------|-------|-------|-----------------|------------|
+| `STATE.md` | yes | you | no — your declarations | yes |
+| `config.yaml` | yes | you | no — your knobs | yes |
+| `RELEASE.md` | yes — the Notes tail | shared | no | yes |
+
+**Machine memory (never open)**
+
+| file | edit? | owner | safe to delete? | committed? |
+|------|-------|-------|-----------------|------------|
+| `briefs/<date>.md` | no | machine | no — memory | yes |
+| `ledger.jsonl` | no | machine | **no — destroys memory** | yes |
+| `runtime/` (`cursors.json`, `out/*.json`) | no | machine | **yes — resets cadence only** | no |
+
+Two deletion subtleties, the same the directory README states:
+
+- Everything under `runtime/` is disposable — safe to delete; deleting it only resets cadence.
+- `ledger.jsonl` is Nightwatch's memory — deleting it is not safe; it lives outside `runtime/` for
+  that reason.
+
+`MORNING.md` is a byte-identical copy of the newest file in `briefs/` — open `MORNING.md`, commit
+`briefs/`, never read both. `STATE.md` is yours; `runtime/cursors.json` is the machine's scheduling
+cursor — unrelated despite the old name. Commit the briefs and the ledger (the system's memory); the
+nested `.gitignore` ignores `runtime/` for you (`/nightwatch init` writes it).
 
 `RELEASE.md` can be relocated to the repo root (or elsewhere, e.g. `docs/`) via `release_path` for
 projects that want it as a public deliverable — the one opt-in exception to the single home.

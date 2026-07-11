@@ -1,19 +1,33 @@
 # .nightwatch/ — what to open, when
 
-Each file names its own moment. Read only what supports the morning decision; ignore the machine's memory.
+Each file names its own moment, and answers four questions so you never guess which files are yours and which are the machine's: **edit?** · **owner** · **safe to delete?** · **committed?** Read only what supports the morning decision; ignore the machine's memory.
 
 ## Read (morning)
-- `MORNING.md` — THE file: a byte-identical copy of the newest dated brief. Open this.
-- `out/*.patch` — proposed fixes. Only when the brief links one, followed by its full path.
+| file | edit? | owner | safe to delete? | committed? |
+|------|-------|-------|-----------------|------------|
+| `MORNING.md` | no | machine | yes — rewritten next run | no |
+| `runtime/out/*.patch` | no | machine | yes — regenerated while the finding is open | no |
 
 ## Edit (daytime — overnight runs never rewrite your content)
-- `STATE.md` — your declarations: source-of-truth authority, phase, release definition.
-- `config.yaml` — operational knobs: cadences, budgets, caps, ignore globs.
-- `RELEASE.md` — release tracker; machine-maintained around your human-owned Notes tail.
+| file | edit? | owner | safe to delete? | committed? |
+|------|-------|-------|-----------------|------------|
+| `STATE.md` | yes | you | no — your declarations | yes |
+| `config.yaml` | yes | you | no — your knobs | yes |
+| `RELEASE.md` | yes — the Notes tail | shared | no | yes |
 
 ## Machine memory (never open)
-- `briefs/<date>.md` — dated copies of each brief (committed — they're memory). Never opened.
-- `ledger.jsonl` — every finding plus your checkbox verdicts, backfilled automatically. Never opened or edited by hand.
-- `state.json` — the machine's scheduling cursor. `STATE.md` is yours; `state.json` is the machine's. Unrelated despite the name.
-- `out/*.json` — internal per-run output, gitignored — except `*.patch`, which the brief links by full path. Never browsed.
-- `.gitignore` — nested; ignores `out/` without touching your root `.gitignore`. Never opened.
+| file | edit? | owner | safe to delete? | committed? |
+|------|-------|-------|-----------------|------------|
+| `briefs/<date>.md` | no | machine | no — memory | yes |
+| `ledger.jsonl` | no | machine | **no — deleting it destroys memory** | yes |
+| `README.md` | no | machine | yes — `init` recreates it | yes |
+| `.gitignore` | no | machine | yes — `init` recreates it | yes |
+| `runtime/` | no | machine | **yes — deleting it only resets cadence** | no |
+| `runtime/cursors.json` | no | machine | yes — part of `runtime/` | no |
+| `runtime/out/*.json` | no | machine | yes — part of `runtime/` | no |
+
+## Two deletion subtleties
+- Everything under `runtime/` is disposable — safe to delete; deleting it only resets cadence and forgets tonight's idempotency, and the next run re-creates it.
+- `ledger.jsonl` is Nightwatch's memory (feedback, recurrence, demotion) — deleting it is not safe, and it lives *outside* `runtime/` for exactly that reason.
+
+`STATE.md` is yours; `runtime/cursors.json` is the machine's scheduling cursor — unrelated despite the old name (the cursor was `state.json` before it moved under `runtime/`).

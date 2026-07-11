@@ -99,31 +99,38 @@ Commands provided (plugin-install name — Option B symlink installs get the un-
 ## What lands in your repo
 
 Everything lives under `.nightwatch/` (the single home — zero Nightwatch files in the repo root
-by default). Each file names its own moment, in three tiers: **read** in the morning, **edit** in
-the daytime, or **machine memory** you never open. `init` writes a `.nightwatch/README.md` carrying
-this same map.
+by default). Each file answers four questions — **edit?** · **owner** · **safe to delete?** ·
+**committed?** — grouped by when you'd open it. `init` writes a `.nightwatch/README.md` carrying this
+same four-column map.
 
-```
-.nightwatch/
-  README.md           # ~15-line orientation: the tier map below (written by init)
-  # ── read (morning) ──
-  MORNING.md          # THE file: a byte-identical copy of the newest dated brief — open this
-  out/*.patch         # proposed fixes; only when the brief links one, followed by its full path
-  # ── edit (daytime — overnight runs never rewrite your content) ──
-  STATE.md            # your declarations (drafted by /nightwatch init)
-  config.yaml         # operational knobs; nothing here changes overnight
-  RELEASE.md          # release tracker; machine-maintained around your human-owned Notes tail
-  # ── machine memory (never open) ──
-  briefs/<date>.md    # dated copies of each brief (committed — they're memory); never open
-  ledger.jsonl        # every finding + your checkbox verdicts, backfilled — never open or edit
-  state.json          # the machine's scheduling cursor — never open
-  out/                # internal per-run JSON, gitignored — never browse (except *.patch, above)
-```
+**Read (morning)**
 
-`STATE.md` is yours; `state.json` is the machine's scheduling cursor — unrelated despite the name.
-`out/` is internal per-run JSON (never browsed) except `*.patch` files, which the brief links by
-full repo-relative path. Add `.nightwatch/out/` to your `.gitignore` (`init` adds the nested entry
-for you). Commit the briefs and the ledger — they are the system's memory, never opened by hand.
+| file | edit? | owner | safe to delete? | committed? |
+|------|-------|-------|-----------------|------------|
+| `MORNING.md` | no | machine | yes — rewritten next run | no |
+| `runtime/out/*.patch` | no | machine | yes | no |
+
+**Edit (daytime — overnight runs never rewrite your content)**
+
+| file | edit? | owner | safe to delete? | committed? |
+|------|-------|-------|-----------------|------------|
+| `STATE.md` | yes | you | no — your declarations | yes |
+| `config.yaml` | yes | you | no — your knobs | yes |
+| `RELEASE.md` | yes — the Notes tail | shared | no | yes |
+
+**Machine memory (never open)**
+
+| file | edit? | owner | safe to delete? | committed? |
+|------|-------|-------|-----------------|------------|
+| `briefs/<date>.md` | no | machine | no — memory | yes |
+| `ledger.jsonl` | no | machine | **no — destroys memory** | yes |
+| `runtime/` (`cursors.json`, `out/*.json`) | no | machine | **yes — resets cadence only** | no |
+
+Two deletion subtleties: everything under `runtime/` is disposable — safe to delete; deleting it
+only resets cadence. `ledger.jsonl` is Nightwatch's memory — deleting it is not safe; it lives
+outside `runtime/` for that reason. `STATE.md` is yours; `runtime/cursors.json` is the machine's
+scheduling cursor — unrelated despite the old name. The nested `.gitignore` ignores `runtime/` for
+you (`init` writes it). Commit the briefs and the ledger — they are the system's memory.
 
 ## Safety model
 
