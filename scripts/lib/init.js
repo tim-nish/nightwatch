@@ -353,9 +353,16 @@ function referencedTopSegments(root, productFiles) {
  *                    product allowlist — i.e. it lives in the repo but no product code depends on it.
  * A convention match wins over a heuristic one. Deterministic (sorted). Injectables (`gitFn`,
  * `files`, `config`, `diskDirs`) keep it unit-testable.
+ *
+ * Each candidate carries its pre-selection and an analysis-scope description (FR102): `checked`
+ * means "arrives pre-selected to be EXCLUDED". Finding 0035 — a weak signal never pre-excludes
+ * product: convention matches and DOT-prefixed heuristic dirs (`.github`, `.devcontainer` —
+ * near-certain tooling) arrive pre-checked; a NON-dot heuristic dir (a plain tracked dir merely
+ * unreferenced by imports, e.g. `spaces/`) arrives UNCHECKED so it stays product until the human
+ * deliberately excludes it.
  * @param {string} root
  * @param {{ gitFn?: (root:string, args:string[], opts?:any)=>(string|null), files?: string[], config?: any, diskDirs?: string[], klass?: 'code'|'content' }} [opts]
- * @returns {{ dir:string, glob:string, source:'convention'|'heuristic', reason:string }[]}
+ * @returns {{ dir:string, glob:string, source:'convention'|'heuristic', reason:string, dot:boolean, checked:boolean, description:string }[]}
  */
 function detectDevToolingCandidates(root, opts = {}) {
   const config = opts.config || loadConfig(root).config;
@@ -364,13 +371,22 @@ function detectDevToolingCandidates(root, opts = {}) {
   const isConvention = makeIgnore(DEFAULT_DEV_TOOLING);
   const refs = referencedTopSegments(root, productFiles);
   const diskDirs = opts.diskDirs || rootDirs(root);
-  /** @type {{ dir:string, glob:string, source:'convention'|'heuristic', reason:string }[]} */
+  /** @type {{ dir:string, glob:string, source:'convention'|'heuristic', reason:string, dot:boolean, checked:boolean, description:string }[]} */
   const candidates = [];
   const seen = new Set();
+  const mkCand = (dir, source, reason) => {
+    const dot = dir.startsWith('.');
+    // Convention → pre-checked; heuristic → pre-checked ONLY if dot-prefixed (finding 0035).
+    const checked = source === 'convention' ? true : dot;
+    const description = checked
+      ? `excluded from analysis — ${dir}/ is treated as dev tooling, not product (uncheck to analyze it as product)`
+      : `analyzed as product — ${dir}/ is included; check to exclude it from analysis`;
+    return { dir, glob: `${dir}/**`, source, reason, dot, checked, description };
+  };
   // conventions: repo-root scan (present on disk, even if git-ignored).
   for (const dir of diskDirs) {
     if (isConvention(`${dir}/__probe__`)) {
-      candidates.push({ dir, glob: `${dir}/**`, source: 'convention', reason: 'matches a shipped dev-tooling convention' });
+      candidates.push(mkCand(dir, 'convention', 'matches a shipped dev-tooling convention'));
       seen.add(dir);
     }
   }
@@ -383,12 +399,37 @@ function detectDevToolingCandidates(root, opts = {}) {
     for (const dir of trackedTopDirs(root, gitFn)) {
       if (seen.has(dir)) continue;
       if (!refs.has(dir) && !PRODUCT_DIR_ALLOWLIST.has(dir)) {
-        candidates.push({ dir, glob: `${dir}/**`, source: 'heuristic', reason: 'top-level tracked directory referenced by no product import' });
+        candidates.push(mkCand(dir, 'heuristic', 'top-level tracked directory referenced by no product import'));
         seen.add(dir);
       }
     }
   }
   return candidates.sort((a, b) => a.dir.localeCompare(b.dir));
+}
+
+/**
+ * Translate the human's final checked-state over the classification candidates into the
+ * `dev_tooling` entries to persist (FR102) — so a decline is a real declaration, never a placebo:
+ *  - a CHECKED heuristic → an explicit `dir/**` exclusion (a heuristic is not a shipped default);
+ *  - an UNCHECKED but pre-checked candidate (a convention or dot-heuristic the human declined) → a
+ *    `!dir/**` re-include, a visible versioned decline;
+ *  - a CHECKED convention → nothing (already a shipped default exclusion);
+ *  - a still-UNCHECKED non-dot heuristic → nothing (it stays product; a weak signal writes no glob).
+ * `checkedDirs` is the set of candidate dirs the human left/again checked (to be excluded).
+ * Deterministic: deduped + sorted. The result is the exact `--dev-tooling` set init persists.
+ * @param {{ dir:string, glob:string, source:'convention'|'heuristic', checked:boolean }[]} candidates
+ * @param {Iterable<string>} checkedDirs
+ * @returns {string[]}
+ */
+function resolveDevToolingWrites(candidates, checkedDirs) {
+  const checked = new Set(checkedDirs || []);
+  const out = new Set();
+  for (const c of candidates || []) {
+    const isChecked = checked.has(c.dir);
+    if (isChecked && c.source === 'heuristic') out.add(c.glob);      // exclude a non-default heuristic dir
+    else if (!isChecked && c.checked) out.add('!' + c.glob);         // decline a pre-checked default → re-include
+  }
+  return [...out].sort();
 }
 
 /** Normalize a confirmed entry to a glob: a bare directory name → `name/**`; a glob is kept as-is. */
@@ -478,11 +519,19 @@ function planUpdate(root, opts = {}) {
   const gitFn = opts.gitFn || git;
   const excluded = makeIgnore(analysisExcludeGlobs(config));
   const authTops = authorityTopSegments(lc.authority);
+  // Dirs the human already DECLINED via a `!dir/**` re-include (FR102): a decline is a recorded
+  // decision, so a re-run must propose nothing new for it — it is no longer excluded, so the
+  // `excluded()` probe below would otherwise resurface it as a candidate every time.
+  const declined = new Set(
+    currentUserDevTooling(root)
+      .filter((g) => typeof g === 'string' && g[0] === '!')
+      .map((g) => g.slice(1).split('/')[0])
+  );
   const proposals = [];
   const seen = new Set();
-  // dev-tooling candidates not yet covered by the resolved exclude set.
+  // dev-tooling candidates not yet covered by the resolved exclude set (or already declined).
   for (const c of detectDevToolingCandidates(root, { config, gitFn })) {
-    if (excluded(`${c.dir}/__scope_probe__`)) continue; // already classified as dev_tooling/ignore
+    if (excluded(`${c.dir}/__scope_probe__`) || declined.has(c.dir)) continue; // already classified/decided
     proposals.push({ id: `dev_tooling:${c.dir}`, kind: 'dev_tooling', dir: c.dir, glob: c.glob, summary: `add \`${c.glob}\` to dev_tooling — ${c.reason}` });
     seen.add(c.dir);
   }
@@ -490,7 +539,7 @@ function planUpdate(root, opts = {}) {
   // surfaced as a dev-tooling candidate above.
   for (const dir of trackedTopDirs(root, gitFn)) {
     if (seen.has(dir)) continue;
-    if (excluded(`${dir}/__scope_probe__`)) continue;
+    if (excluded(`${dir}/__scope_probe__`) || declined.has(dir)) continue; // a declined dir is deliberately product
     if (PRODUCT_DIR_ALLOWLIST.has(dir)) continue;
     if (authTops.has(dir)) continue;
     proposals.push({ id: `module:${dir}`, kind: 'module', dir, summary: `new top-level \`${dir}/\` is unclassified — declare it as product (authority) or add it to dev_tooling/ignore` });
@@ -693,5 +742,5 @@ module.exports = {
   detectDevToolingCandidates, writeDevTooling, trackedTopDirs, planMigration, applyMigration,
   planRuntimeMigration, rewriteNestedGitignoreForRuntime,
   planUpdate, applyUpdate, applyMilestonesDraft, setDeclarationField, currentUserDevTooling,
-  suggestPhase,
+  suggestPhase, resolveDevToolingWrites,
 };
